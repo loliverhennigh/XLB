@@ -83,8 +83,8 @@ def out_of_core_boundary(boundary):
 if __name__ == "__main__":
 
     # Normal jax array implementation
-    n = 512
-    sub_n = 256
+    n = 256
+    sub_n = 128
     padding = 16
     dx = 1.0 / n
 
@@ -110,7 +110,7 @@ if __name__ == "__main__":
     dist_boundary = out_of_core_boundary(dist_boundary)
 
     # Apply function to distributed array
-    for i in tqdm(range(4)):
+    for i in tqdm(range(8)):
         dist_phi = apply_16_jacobi_iterations(dist_phi, dist_boundary, dx)
 
     # Plot results

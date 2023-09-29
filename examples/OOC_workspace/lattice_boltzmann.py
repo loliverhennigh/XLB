@@ -735,10 +735,10 @@ def apply_stream_collide(f0, f1, tau: float, nr_steps: int):
 if __name__ == "__main__":
 
     # Sim Parameters
-    n = 512
-    sub_n = 256
+    n = 600
+    sub_n = 300
     tau = 0.53
-    nr_sub_steps = 32
+    nr_sub_steps = 16
     dx = 2.0 * np.pi / n
 
     # Make OOC distributed array
@@ -767,10 +767,18 @@ if __name__ == "__main__":
     f0 = initialize_f(f0, dx)
 
     # Apply streaming and collision
-    nr_steps = 16
+    nr_steps = 8
     t0 = time.time()
     for _ in tqdm(range(nr_steps)):
         f0 = apply_stream_collide(f0, f1, tau, nr_sub_steps)
+
+        #if _ % 1 == 0:
+        #    # Plot results
+        #    np_f = f0.get_array()
+        #    plt.imshow(np_f[3, :, :, 200])
+        #    plt.colorbar()
+        #    plt.savefig("f_.png")
+        #    plt.show()
     t1 = time.time()
 
     # Compute MLUPS
