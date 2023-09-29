@@ -1,13 +1,27 @@
-import warp as wp
 import numpy as np
+import cupy as cp
 from mpi4py import MPI
 import itertools
 from dataclasses import dataclass
 
-from warp_kernels import padded_array_to_array, array_to_padded_array
 
 class Tile:
-    """ A Tile with ghost cells. This tile is used to build a distributed array. """
+    """Base class for Tile with ghost cells. This tile is used to build a distributed array.
+
+    Attributes
+    ----------
+    shape : tuple
+        Shape of the tile. This will be the shape of the array without padding/ghost cells.
+    dtype : cp.dtype
+        Data type the tile represents. Note that the data data may be stored in a different
+        data type. For example, if it is stored in compressed form.
+    padding : tuple
+        Number of padding/ghost cells in each dimension.
+    device : cp.Device
+        Device the tile is stored on.
+    pinned : bool
+        Whether the tile is pinned in memory (CPU only).
+    """
 
     def __init__(self, shape, dtype, padding, device, pinned):
         # Store parameters
@@ -16,9 +30,10 @@ class Tile:
         self.padding = padding
         self.device = device
         self.pinned = pinned
+        self.dtype_itemsize = cp.dtype(self.dtype).itemsize
 
         # Make center array
-        self._array = wp.empty(self.shape, self.dtype, self.device, self.pinned)
+        self._array = self.allocate_array(self.shape)
 
         # Make padding indices
         pad_dir = []
@@ -28,7 +43,7 @@ class Tile:
             else:
                 pad_dir.append((-1, 0, 1))
         self.pad_ind = list(itertools.product(*pad_dir))
-        self.pad_ind.remove((0,)*len(self.shape))
+        self.pad_ind.remove((0,) * len(self.shape))
 
         # Make padding and padding buffer arrays
         self._padding = {}
@@ -43,69 +58,145 @@ class Tile:
                     shape.append(self.shape[i])
 
             # Make padding and padding buffer
-            self._padding[ind] = wp.empty(shape, self.dtype, self.device, self.pinned)
-            self._buf_padding[ind] = wp.empty(shape, self.dtype, self.device, self.pinned)
+            self._padding[ind] = self.allocate_array(shape)
+            self._buf_padding[ind] = self.allocate_array(shape)
 
-        # Compute total number of values stored in the tile
-        size = self._array.size
-        for ind in self.pad_ind:
-            size += self._padding[ind].size
-            size += self._buf_padding[ind].size
-        self.size = size
+    def allocate_array(self, shape):
+        """Returns a cupy array with the given shape."""
+        raise NotImplementedError
 
+    def copy_tile(self, dst_tile):
+        """Copy a tile from one tile to another."""
+        raise NotImplementedError
 
-    @staticmethod
-    def copy_tile(src_tile, dst_tile, stream=None):
-        """ Copy a tile from one tile to another. """
+    def to_array(self, array):
+        """Copy a tile to a full array."""
+        raise NotImplementedError
 
-        # Copy array
-        wp.copy(dst_tile._array, src_tile._array, stream=stream)
-
-        # Copy padding
-        for (src_array, dst_array) in zip(src_tile._padding.values(), dst_tile._padding.values()):
-            wp.copy(dst_array, src_array, stream=stream)
-
-    @staticmethod
-    def tile_to_array(src_tile, dst_array, stream=None):
-        """ Copy a tile to a full array. """
-        dst_shape = list(dst_array.shape)
-        inputs = [dst_array, src_tile._array]
-        inputs.extend([src_tile._padding[index] for index in src_tile._padding.keys()])
-        inputs.extend(src_tile._array.shape[1:])
-        inputs.append(src_tile.padding[1]) # TODO: fix this
-        wp.launch(padded_array_to_array,
-                  dim=list(dst_array.shape),
-                  inputs=inputs,
-                  stream=stream,
-                  device=dst_array.device)
-
-    @staticmethod
-    def array_to_tile(src_array, dst_tile, stream=None):
-        """ Copy a full array to a tile. """
-        src_shape = list(src_array.shape)
-        inputs = [src_array, dst_tile._array]
-        inputs.extend([dst_tile._padding[index] for index in dst_tile._padding.keys()])
-        inputs.extend(dst_tile._array.shape[1:])
-        inputs.append(dst_tile.padding[1]) # TODO: fix this
-        wp.launch(array_to_padded_array,
-                  dim=list(src_array.shape),
-                  inputs=inputs,
-                  stream=stream,
-                  device=src_array.device)
+    def from_array(self, array):
+        """Copy a full array to a tile."""
+        raise NotImplementedError
 
     def swap_buf_padding(self):
-        """ Swap the padding buffer pointer with the padding pointer. """
+        """Swap the padding buffer pointer with the padding pointer."""
         for index in self.pad_ind:
-            (self._buf_padding[index], self._padding[index]) = (self._padding[index], self._buf_padding[index])
+            (self._buf_padding[index], self._padding[index]) = (
+                self._padding[index],
+                self._buf_padding[index],
+            )
 
-class CPUTile(Tile):
-    """ A tile with cells on the CPU. """
+
+class DenseTile(Tile):
+    """A Tile where the data is stored in a dense array of the requested dtype."""
+
+    def __init__(self, shape, dtype, padding, device, pinned):
+        super().__init__(shape, dtype, padding, device, pinned)
+
+        # Get slicing for array copies
+        self._slice_center = tuple(
+            [slice(pad, pad + shape) for (pad, shape) in zip(self.padding, self.shape)]
+        )
+        self._slice_padding_to_array = {}
+        self._slice_array_to_padding = {}
+        for pad_ind in self.pad_ind:
+            slice_padding_to_array = []
+            slice_array_to_padding = []
+            for (pad, ind, s) in zip(self.padding, pad_ind, self.shape):
+                if ind == -1:
+                    slice_padding_to_array.append(slice(0, pad))
+                    slice_array_to_padding.append(slice(pad, 2 * pad))
+                elif ind == 0:
+                    slice_padding_to_array.append(slice(pad, s + pad))
+                    slice_array_to_padding.append(slice(pad, s + pad))
+                else:
+                    slice_padding_to_array.append(slice(s + pad, s + 2 * pad))
+                    slice_array_to_padding.append(slice(s, s + pad))
+            self._slice_padding_to_array[pad_ind] = tuple(slice_padding_to_array)
+            self._slice_array_to_padding[pad_ind] = tuple(slice_array_to_padding)
+
+    def allocate_array(self, shape):
+        """Returns a cupy array with the given shape."""
+        raise NotImplementedError
+
+    def to_array(self, array):
+        """Copy a tile to a full array."""
+        # TODO: This can be done with a single kernel call, profile to see if it is faster and needs to be done.
+
+        # Copy center array
+        array[self._slice_center] = self._array
+
+        # Copy padding
+        for pad_ind in self.pad_ind:
+            array[self._slice_padding_to_array[pad_ind]] = self._padding[pad_ind]
+
+    def from_array(self, array):
+        """Copy a full array to tile."""
+        # TODO: This can be done with a single kernel call, profile to see if it is faster and needs to be done.
+
+        # Copy center array
+        self._array[...] = array[self._slice_center]
+
+        # Copy padding
+        for pad_ind in self.pad_ind:
+            self._padding[pad_ind][...] = array[self._slice_array_to_padding[pad_ind]]
+
+
+class DenseCPUTile(DenseTile):
+    """A tile with cells on the CPU."""
+
+    ###########################################################################
+    # TODO: Figure out what to use for memory allocation. Need to do research
+    # Currently uses way too much memory do to the way cupy allocates memory.
+    # If allocations more than 1GB are made, it will double the amount of
+    # memory used. This is because cupy allocates memory in 1GB chunks or something.
+    ###########################################################################
 
     def __init__(self, shape, dtype, padding):
         super().__init__(shape, dtype, padding, "cpu", True)
 
-class GPUTile(Tile):
-    """ A sub-array with ghost cells on the GPU. """
+    def allocate_array(self, shape):
+        """Returns a cupy array with the given shape."""
+        if self.pinned:
+            # TODO: Seems hacky, but it works. Is there a better way?
+            mem = cp.cuda.alloc_pinned_memory(np.prod(shape) * self.dtype_itemsize)
+            array = np.frombuffer(mem, dtype=self.dtype, count=np.prod(shape)).reshape(
+                shape
+            )
+        else:
+            array = np.zeros(shape, dtype=self.dtype)
+        return array
+
+    def copy_tile(self, dst_tile):
+        """Copy a tile from one tile to another."""
+
+        # Copy array
+        dst_tile._array.set(self._array)
+
+        # Copy padding
+        for (src_array, dst_array) in zip(
+            self._padding.values(), dst_tile._padding.values()
+        ):
+            dst_array.set(src_array)
+
+
+class DenseGPUTile(DenseTile):
+    """A sub-array with ghost cells on the GPU."""
 
     def __init__(self, shape, dtype, padding):
         super().__init__(shape, dtype, padding, "cuda", False)
+
+    def allocate_array(self, shape):
+        """Returns a cupy array with the given shape."""
+        return cp.zeros(shape, dtype=self.dtype)
+
+    def copy_tile(self, dst_tile):
+        """Copy a tile from one tile to another."""
+
+        # Copy array
+        self._array.get(out=dst_tile._array)
+
+        # Copy padding
+        for (src_array, dst_array) in zip(
+            self._padding.values(), dst_tile._padding.values()
+        ):
+            src_array.get(out=dst_array)

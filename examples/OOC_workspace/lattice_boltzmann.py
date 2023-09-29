@@ -20,16 +20,18 @@ comm = MPI.COMM_WORLD
 # Initialize Warp
 wp.init()
 
+
 @wp.func
 def sample(
-        f: wp.array4d(dtype=float),
-        x: int,
-        y: int,
-        z: int,
-        q: int,
-        width: int,
-        height: int,
-        length: int):
+    f: wp.array4d(dtype=float),
+    x: int,
+    y: int,
+    z: int,
+    q: int,
+    width: int,
+    height: int,
+    length: int,
+):
 
     # Periodic boundary conditions
     if x == -1:
@@ -47,14 +49,16 @@ def sample(
     s = f[q, x, y, z]
     return s
 
+
 @wp.kernel
 def stream_collide(
-        f0: wp.array4d(dtype=float),
-        f1: wp.array4d(dtype=float),
-        width: int,
-        height: int,
-        length: int,
-        tau: float):
+    f0: wp.array4d(dtype=float),
+    f1: wp.array4d(dtype=float),
+    width: int,
+    height: int,
+    length: int,
+    tau: float,
+):
 
     # get index
     x, y, z = wp.tid()
@@ -81,31 +85,63 @@ def stream_collide(
     f_0_2_1 = sample(f0, x, y - 1, z + 1, 18, width, height, length)
 
     # compute u and p
-    p = (f_1_1_1
-       + f_2_1_1 + f_0_1_1
-       + f_1_2_1 + f_1_0_1
-       + f_1_1_2 + f_1_1_0
-       + f_1_2_2 + f_1_0_0
-       + f_1_2_0 + f_1_0_2
-       + f_2_1_2 + f_0_1_0
-       + f_2_1_0 + f_0_1_2
-       + f_2_2_1 + f_0_0_1
-       + f_2_0_1 + f_0_2_1)
-    u = (f_2_1_1 - f_0_1_1
-       + f_2_1_2 - f_0_1_0
-       + f_2_1_0 - f_0_1_2
-       + f_2_2_1 - f_0_0_1
-       + f_2_0_1 - f_0_2_1)
-    v = (f_1_2_1 - f_1_0_1
-       + f_1_2_2 - f_1_0_0
-       + f_1_2_0 - f_1_0_2
-       + f_2_2_1 - f_0_0_1
-       - f_2_0_1 + f_0_2_1)
-    w = (f_1_1_2 - f_1_1_0
-       + f_1_2_2 - f_1_0_0
-       - f_1_2_0 + f_1_0_2
-       + f_2_1_2 - f_0_1_0
-       - f_2_1_0 + f_0_1_2)
+    p = (
+        f_1_1_1
+        + f_2_1_1
+        + f_0_1_1
+        + f_1_2_1
+        + f_1_0_1
+        + f_1_1_2
+        + f_1_1_0
+        + f_1_2_2
+        + f_1_0_0
+        + f_1_2_0
+        + f_1_0_2
+        + f_2_1_2
+        + f_0_1_0
+        + f_2_1_0
+        + f_0_1_2
+        + f_2_2_1
+        + f_0_0_1
+        + f_2_0_1
+        + f_0_2_1
+    )
+    u = (
+        f_2_1_1
+        - f_0_1_1
+        + f_2_1_2
+        - f_0_1_0
+        + f_2_1_0
+        - f_0_1_2
+        + f_2_2_1
+        - f_0_0_1
+        + f_2_0_1
+        - f_0_2_1
+    )
+    v = (
+        f_1_2_1
+        - f_1_0_1
+        + f_1_2_2
+        - f_1_0_0
+        + f_1_2_0
+        - f_1_0_2
+        + f_2_2_1
+        - f_0_0_1
+        - f_2_0_1
+        + f_0_2_1
+    )
+    w = (
+        f_1_1_2
+        - f_1_1_0
+        + f_1_2_2
+        - f_1_0_0
+        - f_1_2_0
+        + f_1_0_2
+        + f_2_1_2
+        - f_0_1_0
+        - f_2_1_0
+        + f_0_1_2
+    )
     u = u / p
     v = v / p
     w = w / p
@@ -141,44 +177,169 @@ def stream_collide(
     exu_2_0_1 = u - v
     exu_0_2_1 = -u + v
 
-
     # compute equilibrium dist
     denominator_1 = 0.6666666666
     denominator_2 = 0.1111111111
     weight_0 = 0.33333333
     weight_1 = 0.05555555
     weight_2 = 0.02777777
-    f_eq_1_1_1 = weight_0 * (p * ((- uxu)/ denominator_1 + 1.0))
+    f_eq_1_1_1 = weight_0 * (p * ((-uxu) / denominator_1 + 1.0))
 
-    f_eq_2_1_1 = weight_1 * (p * ((2.0 * exu_2_1_1 - uxu) / denominator_1 + 0.5 * ((exu_2_1_1 * exu_2_1_1) / denominator_2) + 1.0))
-    f_eq_0_1_1 = weight_1 * (p * ((2.0 * exu_0_1_1 - uxu) / denominator_1 + 0.5 * ((exu_0_1_1 * exu_0_1_1) / denominator_2) + 1.0))
+    f_eq_2_1_1 = weight_1 * (
+        p
+        * (
+            (2.0 * exu_2_1_1 - uxu) / denominator_1
+            + 0.5 * ((exu_2_1_1 * exu_2_1_1) / denominator_2)
+            + 1.0
+        )
+    )
+    f_eq_0_1_1 = weight_1 * (
+        p
+        * (
+            (2.0 * exu_0_1_1 - uxu) / denominator_1
+            + 0.5 * ((exu_0_1_1 * exu_0_1_1) / denominator_2)
+            + 1.0
+        )
+    )
 
-    f_eq_1_2_1 = weight_1 * (p * ((2.0 * exu_1_2_1 - uxu) / denominator_1 + 0.5 * ((exu_1_2_1 * exu_1_2_1) / denominator_2) + 1.0))
-    f_eq_1_0_1 = weight_1 * (p * ((2.0 * exu_1_0_1 - uxu) / denominator_1 + 0.5 * ((exu_1_2_1 * exu_1_2_1) / denominator_2) + 1.0))
+    f_eq_1_2_1 = weight_1 * (
+        p
+        * (
+            (2.0 * exu_1_2_1 - uxu) / denominator_1
+            + 0.5 * ((exu_1_2_1 * exu_1_2_1) / denominator_2)
+            + 1.0
+        )
+    )
+    f_eq_1_0_1 = weight_1 * (
+        p
+        * (
+            (2.0 * exu_1_0_1 - uxu) / denominator_1
+            + 0.5 * ((exu_1_2_1 * exu_1_2_1) / denominator_2)
+            + 1.0
+        )
+    )
 
-    f_eq_1_1_2 = weight_1 * (p * ((2.0 * exu_1_1_2 - uxu) / denominator_1 + 0.5 * ((exu_1_1_2 * exu_1_1_2) / denominator_2) + 1.0))
-    f_eq_1_1_0 = weight_1 * (p * ((2.0 * exu_1_1_0 - uxu) / denominator_1 + 0.5 * ((exu_1_1_0 * exu_1_1_0) / denominator_2) + 1.0))
+    f_eq_1_1_2 = weight_1 * (
+        p
+        * (
+            (2.0 * exu_1_1_2 - uxu) / denominator_1
+            + 0.5 * ((exu_1_1_2 * exu_1_1_2) / denominator_2)
+            + 1.0
+        )
+    )
+    f_eq_1_1_0 = weight_1 * (
+        p
+        * (
+            (2.0 * exu_1_1_0 - uxu) / denominator_1
+            + 0.5 * ((exu_1_1_0 * exu_1_1_0) / denominator_2)
+            + 1.0
+        )
+    )
 
-    f_eq_1_2_2 = weight_2 * (p * ((2.0 * exu_1_2_2 - uxu) / denominator_1 + 0.5 * ((exu_1_2_2 * exu_1_2_2) / denominator_2) + 1.0))
-    f_eq_1_0_0 = weight_2 * (p * ((2.0 * exu_1_0_0 - uxu) / denominator_1 + 0.5 * ((exu_1_0_0 * exu_1_0_0) / denominator_2) + 1.0))
+    f_eq_1_2_2 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_1_2_2 - uxu) / denominator_1
+            + 0.5 * ((exu_1_2_2 * exu_1_2_2) / denominator_2)
+            + 1.0
+        )
+    )
+    f_eq_1_0_0 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_1_0_0 - uxu) / denominator_1
+            + 0.5 * ((exu_1_0_0 * exu_1_0_0) / denominator_2)
+            + 1.0
+        )
+    )
 
-    f_eq_1_2_0 = weight_2 * (p * (1.5 * (2.0 * exu_1_2_0 - uxu) + 0.5 * ((exu_1_2_0 * exu_1_2_0) / denominator_2) + 1.0))
-    f_eq_1_0_2 = weight_2 * (p * ((2.0 * exu_1_0_2 - uxu) / denominator_1 + 0.5 * ((exu_1_0_2 * exu_1_0_2) / denominator_2) + 1.0))
+    f_eq_1_2_0 = weight_2 * (
+        p
+        * (
+            1.5 * (2.0 * exu_1_2_0 - uxu)
+            + 0.5 * ((exu_1_2_0 * exu_1_2_0) / denominator_2)
+            + 1.0
+        )
+    )
+    f_eq_1_0_2 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_1_0_2 - uxu) / denominator_1
+            + 0.5 * ((exu_1_0_2 * exu_1_0_2) / denominator_2)
+            + 1.0
+        )
+    )
 
-    f_eq_2_1_2 = weight_2 * (p * ((2.0 * exu_2_1_2 - uxu) / denominator_1 + 0.5 * ((exu_2_1_2 * exu_2_1_2) / denominator_2) + 1.0))
-    f_eq_0_1_0 = weight_2 * (p * ((2.0 * exu_0_1_0 - uxu) / denominator_1 + 0.5 * ((exu_0_1_0 * exu_0_1_0) / denominator_2) + 1.0))
+    f_eq_2_1_2 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_2_1_2 - uxu) / denominator_1
+            + 0.5 * ((exu_2_1_2 * exu_2_1_2) / denominator_2)
+            + 1.0
+        )
+    )
+    f_eq_0_1_0 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_0_1_0 - uxu) / denominator_1
+            + 0.5 * ((exu_0_1_0 * exu_0_1_0) / denominator_2)
+            + 1.0
+        )
+    )
 
-    f_eq_2_1_0 = weight_2 * (p * ((2.0 * exu_2_1_0 - uxu) / denominator_1 + 0.5 * ((exu_2_1_0 * exu_2_1_0) / denominator_2) + 1.0))
-    f_eq_0_1_2 = weight_2 * (p * ((2.0 * exu_0_1_2 - uxu) / denominator_1 + 0.5 * ((exu_0_1_2 * exu_0_1_2) / denominator_2) + 1.0))
+    f_eq_2_1_0 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_2_1_0 - uxu) / denominator_1
+            + 0.5 * ((exu_2_1_0 * exu_2_1_0) / denominator_2)
+            + 1.0
+        )
+    )
+    f_eq_0_1_2 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_0_1_2 - uxu) / denominator_1
+            + 0.5 * ((exu_0_1_2 * exu_0_1_2) / denominator_2)
+            + 1.0
+        )
+    )
 
-    f_eq_2_2_1 = weight_2 * (p * ((2.0 * exu_2_2_1 - uxu) / denominator_1 + 0.5 * ((exu_2_2_1 * exu_2_2_1) / denominator_2) + 1.0))
-    f_eq_0_0_1 = weight_2 * (p * ((2.0 * exu_0_0_1 - uxu) / denominator_1 + 0.5 * ((exu_0_0_1 * exu_0_0_1) / denominator_2) + 1.0))
+    f_eq_2_2_1 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_2_2_1 - uxu) / denominator_1
+            + 0.5 * ((exu_2_2_1 * exu_2_2_1) / denominator_2)
+            + 1.0
+        )
+    )
+    f_eq_0_0_1 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_0_0_1 - uxu) / denominator_1
+            + 0.5 * ((exu_0_0_1 * exu_0_0_1) / denominator_2)
+            + 1.0
+        )
+    )
 
-    f_eq_2_0_1 = weight_2 * (p * ((2.0 * exu_2_0_1 - uxu) / denominator_1 + 0.5 * ((exu_2_0_1 * exu_2_0_1) / denominator_2) + 1.0))
-    f_eq_0_2_1 = weight_2 * (p * ((2.0 * exu_0_2_1 - uxu) / denominator_1 + 0.5 * ((exu_0_2_1 * exu_0_2_1) / denominator_2) + 1.0))
+    f_eq_2_0_1 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_2_0_1 - uxu) / denominator_1
+            + 0.5 * ((exu_2_0_1 * exu_2_0_1) / denominator_2)
+            + 1.0
+        )
+    )
+    f_eq_0_2_1 = weight_2 * (
+        p
+        * (
+            (2.0 * exu_0_2_1 - uxu) / denominator_1
+            + 0.5 * ((exu_0_2_1 * exu_0_2_1) / denominator_2)
+            + 1.0
+        )
+    )
 
     # set next lattice state
-    inv_tau = (1.0 / tau)
+    inv_tau = 1.0 / tau
     f1[0, x, y, z] = f_1_1_1 - inv_tau * (f_1_1_1 - f_eq_1_1_1)
     f1[1, x, y, z] = f_2_1_1 - inv_tau * (f_2_1_1 - f_eq_2_1_1)
     f1[2, x, y, z] = f_0_1_1 - inv_tau * (f_0_1_1 - f_eq_0_1_1)
@@ -199,14 +360,16 @@ def stream_collide(
     f1[17, x, y, z] = f_2_0_1 - inv_tau * (f_2_0_1 - f_eq_2_0_1)
     f1[18, x, y, z] = f_0_2_1 - inv_tau * (f_0_2_1 - f_eq_0_2_1)
 
+
 @wp.kernel
 def compute_vel_p(
-        f0: wp.array4d(dtype=float),
-        u0: wp.array4d(dtype=wp.vec3),
-        p0: wp.array4d(dtype=float),
-        width: int,
-        height: int,
-        length: int):
+    f0: wp.array4d(dtype=float),
+    u0: wp.array4d(dtype=wp.vec3),
+    p0: wp.array4d(dtype=float),
+    width: int,
+    height: int,
+    length: int,
+):
 
     # get index
     x, y, z = wp.tid()
@@ -233,31 +396,63 @@ def compute_vel_p(
     f_0_2_1 = sample(f0, x, y, z, 18, width, height, length)
 
     # compute u and p
-    p = (f_1_1_1
-       + f_2_1_1 + f_0_1_1
-       + f_1_2_1 + f_1_0_1
-       + f_1_1_2 + f_1_1_0
-       + f_1_2_2 + f_1_0_0
-       + f_1_2_0 + f_1_0_2
-       + f_2_1_2 + f_0_1_0
-       + f_2_1_0 + f_0_1_2
-       + f_2_2_1 + f_0_0_1
-       + f_2_0_1 + f_0_2_1)
-    u = (f_2_1_1 - f_0_1_1
-       + f_2_1_2 - f_0_1_0
-       + f_2_1_0 - f_0_1_2
-       + f_2_2_1 - f_0_0_1
-       + f_2_0_1 - f_0_2_1)
-    v = (f_1_2_1 - f_1_0_1
-       + f_1_2_2 - f_1_0_0
-       + f_1_2_0 - f_1_0_2
-       + f_2_2_1 - f_0_0_1
-       - f_2_0_1 + f_0_2_1)
-    w = (f_1_1_2 - f_1_1_0
-       + f_1_2_2 - f_1_0_0
-       - f_1_2_0 + f_1_0_2
-       + f_2_1_2 - f_0_1_0
-       - f_2_1_0 + f_0_1_2)
+    p = (
+        f_1_1_1
+        + f_2_1_1
+        + f_0_1_1
+        + f_1_2_1
+        + f_1_0_1
+        + f_1_1_2
+        + f_1_1_0
+        + f_1_2_2
+        + f_1_0_0
+        + f_1_2_0
+        + f_1_0_2
+        + f_2_1_2
+        + f_0_1_0
+        + f_2_1_0
+        + f_0_1_2
+        + f_2_2_1
+        + f_0_0_1
+        + f_2_0_1
+        + f_0_2_1
+    )
+    u = (
+        f_2_1_1
+        - f_0_1_1
+        + f_2_1_2
+        - f_0_1_0
+        + f_2_1_0
+        - f_0_1_2
+        + f_2_2_1
+        - f_0_0_1
+        + f_2_0_1
+        - f_0_2_1
+    )
+    v = (
+        f_1_2_1
+        - f_1_0_1
+        + f_1_2_2
+        - f_1_0_0
+        + f_1_2_0
+        - f_1_0_2
+        + f_2_2_1
+        - f_0_0_1
+        - f_2_0_1
+        + f_0_2_1
+    )
+    w = (
+        f_1_1_2
+        - f_1_1_0
+        + f_1_2_2
+        - f_1_0_0
+        - f_1_2_0
+        + f_1_0_2
+        + f_2_1_2
+        - f_0_1_0
+        - f_2_1_0
+        + f_0_1_2
+    )
     u = u / p
     v = v / p
     w = w / p
@@ -266,14 +461,16 @@ def compute_vel_p(
     p0[0, x, y, z] = p
     u0[0, x, y, z] = wp.vec3(u, v, w)
 
+
 @wp.kernel
 def initialize_taylor_green(
-        f: wp.array4d(dtype=wp.float32),
-        dx: float,
-        vel: float,
-        start_x: int,
-        start_y: int,
-        start_z: int):
+    f: wp.array4d(dtype=wp.float32),
+    dx: float,
+    vel: float,
+    start_x: int,
+    start_y: int,
+    start_z: int,
+):
 
     # get index
     i, j, k = wp.tid()
@@ -289,7 +486,14 @@ def initialize_taylor_green(
     w = 0.0
 
     # compute p
-    p = 3.0 * vel * vel * (1.0 / 16.0) * (wp.cos(2.0 * x) + wp.cos(2.0 * y) * (wp.cos(2.0 * z) + 2.0)) + 1.0
+    p = (
+        3.0
+        * vel
+        * vel
+        * (1.0 / 16.0)
+        * (wp.cos(2.0 * x) + wp.cos(2.0 * y) * (wp.cos(2.0 * z) + 2.0))
+        + 1.0
+    )
 
     # compute u X u
     uxu = u * u + v * v + w * w
@@ -321,37 +525,163 @@ def initialize_taylor_green(
     weight_0 = 0.33333333
     weight_1 = 0.05555555
     weight_2 = 0.02777777
-    f_eq_1_1_1 = weight_0 * (p * (factor_1 * (- uxu) + 1.0))
-    f_eq_2_1_1 = weight_1 * (p * (factor_1 * (2.0 * exu_2_1_1 - uxu) + factor_2 * (exu_2_1_1 * exu_2_1_1) + 1.0))
-    f_eq_0_1_1 = weight_1 * (p * (factor_1 * (2.0 * exu_0_1_1 - uxu) + factor_2 * (exu_0_1_1 * exu_0_1_1) + 1.0))
-    f_eq_1_2_1 = weight_1 * (p * (factor_1 * (2.0 * exu_1_2_1 - uxu) + factor_2 * (exu_1_2_1 * exu_1_2_1) + 1.0))
-    f_eq_1_0_1 = weight_1 * (p * (factor_1 * (2.0 * exu_1_0_1 - uxu) + factor_2 * (exu_1_2_1 * exu_1_2_1) + 1.0))
-    f_eq_1_1_2 = weight_1 * (p * (factor_1 * (2.0 * exu_1_1_2 - uxu) + factor_2 * (exu_1_1_2 * exu_1_1_2) + 1.0))
-    f_eq_1_1_0 = weight_1 * (p * (factor_1 * (2.0 * exu_1_1_0 - uxu) + factor_2 * (exu_1_1_0 * exu_1_1_0) + 1.0))
-    f_eq_1_2_2 = weight_2 * (p * (factor_1 * (2.0 * exu_1_2_2 - uxu) + factor_2 * (exu_1_2_2 * exu_1_2_2) + 1.0))
-    f_eq_1_0_0 = weight_2 * (p * (factor_1 * (2.0 * exu_1_0_0 - uxu) + factor_2 * (exu_1_0_0 * exu_1_0_0) + 1.0))
-    f_eq_1_2_0 = weight_2 * (p * (factor_1 * (2.0 * exu_1_2_0 - uxu) + factor_2 * (exu_1_2_0 * exu_1_2_0) + 1.0))
-    f_eq_1_0_2 = weight_2 * (p * (factor_1 * (2.0 * exu_1_0_2 - uxu) + factor_2 * (exu_1_0_2 * exu_1_0_2) + 1.0))
-    f_eq_2_1_2 = weight_2 * (p * (factor_1 * (2.0 * exu_2_1_2 - uxu) + factor_2 * (exu_2_1_2 * exu_2_1_2) + 1.0))
-    f_eq_0_1_0 = weight_2 * (p * (factor_1 * (2.0 * exu_0_1_0 - uxu) + factor_2 * (exu_0_1_0 * exu_0_1_0) + 1.0))
-    f_eq_2_1_0 = weight_2 * (p * (factor_1 * (2.0 * exu_2_1_0 - uxu) + factor_2 * (exu_2_1_0 * exu_2_1_0) + 1.0))
-    f_eq_0_1_2 = weight_2 * (p * (factor_1 * (2.0 * exu_0_1_2 - uxu) + factor_2 * (exu_0_1_2 * exu_0_1_2) + 1.0))
-    f_eq_2_2_1 = weight_2 * (p * (factor_1 * (2.0 * exu_2_2_1 - uxu) + factor_2 * (exu_2_2_1 * exu_2_2_1) + 1.0))
-    f_eq_0_0_1 = weight_2 * (p * (factor_1 * (2.0 * exu_0_0_1 - uxu) + factor_2 * (exu_0_0_1 * exu_0_0_1) + 1.0))
-    f_eq_2_0_1 = weight_2 * (p * (factor_1 * (2.0 * exu_2_0_1 - uxu) + factor_2 * (exu_2_0_1 * exu_2_0_1) + 1.0))
-    f_eq_0_2_1 = weight_2 * (p * (factor_1 * (2.0 * exu_0_2_1 - uxu) + factor_2 * (exu_0_2_1 * exu_0_2_1) + 1.0))
+    f_eq_1_1_1 = weight_0 * (p * (factor_1 * (-uxu) + 1.0))
+    f_eq_2_1_1 = weight_1 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_2_1_1 - uxu)
+            + factor_2 * (exu_2_1_1 * exu_2_1_1)
+            + 1.0
+        )
+    )
+    f_eq_0_1_1 = weight_1 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_0_1_1 - uxu)
+            + factor_2 * (exu_0_1_1 * exu_0_1_1)
+            + 1.0
+        )
+    )
+    f_eq_1_2_1 = weight_1 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_1_2_1 - uxu)
+            + factor_2 * (exu_1_2_1 * exu_1_2_1)
+            + 1.0
+        )
+    )
+    f_eq_1_0_1 = weight_1 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_1_0_1 - uxu)
+            + factor_2 * (exu_1_2_1 * exu_1_2_1)
+            + 1.0
+        )
+    )
+    f_eq_1_1_2 = weight_1 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_1_1_2 - uxu)
+            + factor_2 * (exu_1_1_2 * exu_1_1_2)
+            + 1.0
+        )
+    )
+    f_eq_1_1_0 = weight_1 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_1_1_0 - uxu)
+            + factor_2 * (exu_1_1_0 * exu_1_1_0)
+            + 1.0
+        )
+    )
+    f_eq_1_2_2 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_1_2_2 - uxu)
+            + factor_2 * (exu_1_2_2 * exu_1_2_2)
+            + 1.0
+        )
+    )
+    f_eq_1_0_0 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_1_0_0 - uxu)
+            + factor_2 * (exu_1_0_0 * exu_1_0_0)
+            + 1.0
+        )
+    )
+    f_eq_1_2_0 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_1_2_0 - uxu)
+            + factor_2 * (exu_1_2_0 * exu_1_2_0)
+            + 1.0
+        )
+    )
+    f_eq_1_0_2 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_1_0_2 - uxu)
+            + factor_2 * (exu_1_0_2 * exu_1_0_2)
+            + 1.0
+        )
+    )
+    f_eq_2_1_2 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_2_1_2 - uxu)
+            + factor_2 * (exu_2_1_2 * exu_2_1_2)
+            + 1.0
+        )
+    )
+    f_eq_0_1_0 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_0_1_0 - uxu)
+            + factor_2 * (exu_0_1_0 * exu_0_1_0)
+            + 1.0
+        )
+    )
+    f_eq_2_1_0 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_2_1_0 - uxu)
+            + factor_2 * (exu_2_1_0 * exu_2_1_0)
+            + 1.0
+        )
+    )
+    f_eq_0_1_2 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_0_1_2 - uxu)
+            + factor_2 * (exu_0_1_2 * exu_0_1_2)
+            + 1.0
+        )
+    )
+    f_eq_2_2_1 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_2_2_1 - uxu)
+            + factor_2 * (exu_2_2_1 * exu_2_2_1)
+            + 1.0
+        )
+    )
+    f_eq_0_0_1 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_0_0_1 - uxu)
+            + factor_2 * (exu_0_0_1 * exu_0_0_1)
+            + 1.0
+        )
+    )
+    f_eq_2_0_1 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_2_0_1 - uxu)
+            + factor_2 * (exu_2_0_1 * exu_2_0_1)
+            + 1.0
+        )
+    )
+    f_eq_0_2_1 = weight_2 * (
+        p
+        * (
+            factor_1 * (2.0 * exu_0_2_1 - uxu)
+            + factor_2 * (exu_0_2_1 * exu_0_2_1)
+            + 1.0
+        )
+    )
 
     # set next lattice state
-    f[0,  i, j, k] = f_eq_1_1_1
-    f[1,  i, j, k] = f_eq_2_1_1
-    f[2,  i, j, k] = f_eq_0_1_1
-    f[3,  i, j, k] = f_eq_1_2_1
-    f[4,  i, j, k] = f_eq_1_0_1
-    f[5,  i, j, k] = f_eq_1_1_2
-    f[6,  i, j, k] = f_eq_1_1_0
-    f[7,  i, j, k] = f_eq_1_2_2
-    f[8,  i, j, k] = f_eq_1_0_0
-    f[9,  i, j, k] = f_eq_1_2_0
+    f[0, i, j, k] = f_eq_1_1_1
+    f[1, i, j, k] = f_eq_2_1_1
+    f[2, i, j, k] = f_eq_0_1_1
+    f[3, i, j, k] = f_eq_1_2_1
+    f[4, i, j, k] = f_eq_1_0_1
+    f[5, i, j, k] = f_eq_1_1_2
+    f[6, i, j, k] = f_eq_1_1_0
+    f[7, i, j, k] = f_eq_1_2_2
+    f[8, i, j, k] = f_eq_1_0_0
+    f[9, i, j, k] = f_eq_1_2_0
     f[10, i, j, k] = f_eq_1_0_2
     f[11, i, j, k] = f_eq_2_1_2
     f[12, i, j, k] = f_eq_0_1_0
@@ -363,7 +693,7 @@ def initialize_taylor_green(
     f[18, i, j, k] = f_eq_0_2_1
 
 
-@OOCmap(comm, (0,), add_index=True, backend='warp')
+@OOCmap(comm, (0,), add_index=True, backend="warp")
 def initialize_f(f, dx: float):
     # Get inputs
     cs = 1.0 / np.sqrt(3.0)
@@ -372,14 +702,17 @@ def initialize_f(f, dx: float):
     start_x, start_y, start_z = global_index[1], global_index[2], global_index[3]
 
     # Launch kernel
-    wp.launch(kernel=initialize_taylor_green,
-              dim=list(f.shape[1:]),
-              inputs=[f, dx, vel, start_x, start_y, start_z],
-              device=f.device)
+    wp.launch(
+        kernel=initialize_taylor_green,
+        dim=list(f.shape[1:]),
+        inputs=[f, dx, vel, start_x, start_y, start_z],
+        device=f.device,
+    )
 
     return f
 
-@OOCmap(comm, (0,), backend='warp')
+
+@OOCmap(comm, (0,), backend="warp")
 def apply_stream_collide(f0, f1, tau: float, nr_steps: int):
     # f0: is assumed to be a OOC array
 
@@ -387,51 +720,54 @@ def apply_stream_collide(f0, f1, tau: float, nr_steps: int):
     for _ in range(nr_steps):
         # Apply streaming and collision step
         wp.launch(
-                kernel=stream_collide,
-                dim=list(f0.shape[1:]),
-                inputs=[
-                    f0,
-                    f1,
-                    f0.shape[1],
-                    f0.shape[2],
-                    f0.shape[3],
-                    tau],
-                device=f0.device)
+            kernel=stream_collide,
+            dim=list(f0.shape[1:]),
+            inputs=[f0, f1, f0.shape[1], f0.shape[2], f0.shape[3], tau],
+            device=f0.device,
+        )
 
         # Swap f0 and f1
         f0, f1 = f1, f0
 
     return f0
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
 
     # Sim Parameters
-    n = 256
-    sub_n = 128
+    n = 512
+    sub_n = 256
     tau = 0.53
-    nr_sub_steps = 16
+    nr_sub_steps = 32
     dx = 2.0 * np.pi / n
 
     # Make OOC distributed array
     f0 = OOCArray(
         shape=(19, n, n, n),
-        dtype=wp.float32,
+        dtype=np.float32,
         tile_shape=(19, sub_n, sub_n, sub_n),
         padding=(0, nr_sub_steps, nr_sub_steps, nr_sub_steps),
         comm=comm,
-        devices=['cuda:0'])
+        devices=["cuda:0"],
+    )
 
     # Make f1
     f1 = wp.empty(
-            (19, sub_n+2*nr_sub_steps, sub_n+2*nr_sub_steps, sub_n+2*nr_sub_steps),
-            dtype=wp.float32,
-            device='cuda:0')
+        (
+            19,
+            sub_n + 2 * nr_sub_steps,
+            sub_n + 2 * nr_sub_steps,
+            sub_n + 2 * nr_sub_steps,
+        ),
+        dtype=wp.float32,
+        device="cuda:0",
+    )
 
     # Initialize f0
     f0 = initialize_f(f0, dx)
 
     # Apply streaming and collision
-    nr_steps = 128
+    nr_steps = 16
     t0 = time.time()
     for _ in tqdm(range(nr_steps)):
         f0 = apply_stream_collide(f0, f1, tau, nr_sub_steps)
@@ -439,12 +775,12 @@ if __name__ == '__main__':
 
     # Compute MLUPS
     mlups = (nr_sub_steps * nr_steps * n * n * n) / (t1 - t0) / 1e6
-    print("Nr Million Cells: ", n*n*n/1e6)
-    print('MLUPS: ', mlups)
+    print("Nr Million Cells: ", n * n * n / 1e6)
+    print("MLUPS: ", mlups)
 
     # Plot results
     np_f = f0.get_array()
-    plt.imshow(np_f[0, :, :, 0])
+    plt.imshow(np_f[3, :, :, 200])
     plt.colorbar()
-    plt.savefig('f_.png')
+    plt.savefig("f_.png")
     plt.show()

@@ -6,7 +6,7 @@ import mpi4py.MPI as MPI
 import time
 import jax.numpy as jnp
 from jax import jit
-import warp as wp
+import cupy as cp
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
@@ -16,8 +16,6 @@ from ooc_array import OOCArray
 # Initialize MPI
 comm = MPI.COMM_WORLD
 
-# Initialize Warp
-wp.init()
 
 @jit
 def jacobi_iteration(phi: jnp.ndarray, boundary: jnp.ndarray, dx: float) -> jnp.ndarray:
@@ -32,23 +30,29 @@ def jacobi_iteration(phi: jnp.ndarray, boundary: jnp.ndarray, dx: float) -> jnp.
     phi_1_1_2 = jnp.roll(phi, -1, axis=3)
 
     # Jacobi iteration
-    phi_new = (phi_0_1_1 + phi_2_1_1 + phi_1_0_1 + phi_1_2_1 + phi_1_1_0 + phi_1_1_2 + 1.0) / 6.0
+    phi_new = (
+        phi_0_1_1 + phi_2_1_1 + phi_1_0_1 + phi_1_2_1 + phi_1_1_0 + phi_1_1_2 + 1.0
+    ) / 6.0
 
     # Apply boundary conditions
     phi_new = phi_new * boundary
 
     return phi_new
 
+
 @OOCmap(comm, (0,))
 @jit
-def apply_16_jacobi_iterations(phi: jnp.ndarray, boundary: jnp.ndarray, dx: float) -> jnp.ndarray:
+def apply_16_jacobi_iterations(
+    phi: jnp.ndarray, boundary: jnp.ndarray, dx: float
+) -> jnp.ndarray:
     """Apply 16 Jacobi iterations to the input array."""
     for _ in range(16):
         phi = jacobi_iteration(phi, boundary, dx)
     return phi
 
+
 ## Make function to apply on distributed array
-#def out_of_core_jacobi_iterations(phi: DistributedArray, boundary: DistributedArray, dx: float) -> DistributedArray:
+# def out_of_core_jacobi_iterations(phi: DistributedArray, boundary: DistributedArray, dx: float) -> DistributedArray:
 #    phi = apply_16_jacobi_iterations(phi, boundary, dx)
 #    return phi
 
@@ -75,45 +79,34 @@ def out_of_core_boundary(boundary):
 
     return boundary
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
 
     # Normal jax array implementation
     n = 512
     sub_n = 256
+    padding = 16
     dx = 1.0 / n
-
-    ## Make arrays
-    #phi = jnp.zeros((n, n, n))
-    #boundary = jnp.ones((n-2, n-2, n-2))
-    #boundary = jnp.pad(boundary, 1, mode='constant', constant_values=0.0)
-
-    ## Apply 512 Jacobi iterations
-    #for _ in range(512):
-    #    phi = apply_16_jacobi_iterations(phi, boundary, dx)
-
-    ## Plot results
-    #plt.imshow(phi[:, :, n//2])
-    #plt.colorbar()
-    #plt.show()
-    #plt.close()
 
     # Make OOC distributed array
     dist_phi = OOCArray(
         shape=(1, n, n, n),
-        dtype=wp.float32,
+        dtype=cp.float32,
         tile_shape=(1, sub_n, sub_n, sub_n),
-        padding=(0, 16, 16, 16),
+        padding=(0, padding, padding, padding),
         comm=comm,
-        devices=['cuda:0'])
+        devices=["cuda:0"],
+    )
 
     # Make boundary, 0 on boundary, 1 elsewhere
     dist_boundary = OOCArray(
         shape=(1, n, n, n),
-        dtype=wp.float32,
+        dtype=cp.float32,
         tile_shape=(1, sub_n, sub_n, sub_n),
-        padding=(0, 16, 16, 16),
+        padding=(0, padding, padding, padding),
         comm=comm,
-        devices=['cuda:0'])
+        devices=["cuda:0"],
+    )
     dist_boundary = out_of_core_boundary(dist_boundary)
 
     # Apply function to distributed array
@@ -122,7 +115,7 @@ if __name__ == '__main__':
 
     # Plot results
     np_phi = dist_phi.get_array()
-    plt.imshow(np_phi[0, :, :, n//2])
+    plt.imshow(np_phi[0, :, :, n // 2])
     plt.colorbar()
-    plt.savefig('jacobi.png')
+    plt.savefig("jacobi.png")
     plt.close()

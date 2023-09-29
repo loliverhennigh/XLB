@@ -2,15 +2,44 @@
 
 import functools
 import warp as wp
-import matplotlib.pyplot as plt
+import cupy as cp
+import jax.dlpack as jdlpack
 import numpy as np
 
 from ooc_array import OOCArray
 
 
-def OOCmap(comm, ref_args, add_index=False, backend='jax'):
-    """ Decorator for out-of-core functions. 
-    
+def _cupy_to_backend(cupy_array, backend):
+    # Convert cupy array to backend array
+    dl_array = cupy_array.toDlpack()
+    if backend == "jax":
+        backend_array = jdlpack.from_dlpack(dl_array)
+    elif backend == "warp":
+        backend_array = wp.from_dlpack(dl_array)
+    elif backend == "cupy":
+        backend_array = cupy_array
+    else:
+        raise ValueError(f"Backend {backend} not supported")
+    return backend_array
+
+
+def _backend_to_cupy(backend_array, backend):
+    # Convert backend array to cupy array
+    if backend == "jax":
+        dl_array = jdlpack.to_dlpack(backend_array)
+    elif backend == "warp":
+        dl_array = wp.to_dlpack(backend_array)
+    elif backend == "cupy":
+        return backend_array
+    else:
+        raise ValueError(f"Backend {backend} not supported")
+    cupy_array = cp.fromDlpack(dl_array)
+    return cupy_array
+
+
+def OOCmap(comm, ref_args, add_index=False, backend="jax"):
+    """Decorator for out-of-core functions.
+
     Parameters
     ----------
     comm : MPI communicator
@@ -41,7 +70,9 @@ def OOCmap(comm, ref_args, add_index=False, backend='jax'):
             # TODO: Add better checks
             for ooc_array in ooc_array_args:
                 if ooc_array_args[0].tile_dims != ooc_array.tile_dims:
-                    raise ValueError(f"Tile dimensions of ooc arrays do not match. {ooc_array_args[0].tile_dims} != {ooc_array.tile_dims}")
+                    raise ValueError(
+                        f"Tile dimensions of ooc arrays do not match. {ooc_array_args[0].tile_dims} != {ooc_array.tile_dims}"
+                    )
 
             # Apply the function to each of the ooc arrays
             for tile_index in ooc_array_args[0].tiles.keys():
@@ -49,11 +80,11 @@ def OOCmap(comm, ref_args, add_index=False, backend='jax'):
                 new_args = []
                 for arg in args:
                     if isinstance(arg, OOCArray):
+                        # Get the compute array (this performs all the memory copies)
                         compute_array, global_index = arg.get_compute_array(tile_index)
 
-                        # Convert to JAX array if requested
-                        if backend == 'jax': 
-                            compute_array = wp.to_jax(compute_array)
+                        # Convert to backend array
+                        compute_array = _cupy_to_backend(compute_array, backend)
 
                         # Add index to the arguments if requested
                         if add_index:
@@ -66,24 +97,27 @@ def OOCmap(comm, ref_args, add_index=False, backend='jax'):
                 # Run the function
                 results = func(*new_args)
 
-                # Convert the results back to warp arrays
-                if backend == 'jax':
-                    results = wp.from_jax(results)
-
-                # Write the results back to the ooc array
+                # Convert the results to a tuple if not already
                 if not isinstance(results, tuple):
                     results = (results,)
+
+                # Convert the results back to cupy arrays
+                results = tuple(
+                    [_backend_to_cupy(result, backend) for result in results]
+                )
+
+                # Write the results back to the ooc array
                 for arg_index, result in zip(ref_args, results):
                     args[arg_index].set_tile(result, tile_index)
 
             # Syncronize all processes
-            wp.synchronize()
+            cp.cuda.Device().synchronize()
             comm.Barrier()
 
             # Update the ooc arrays padding
             for ooc_array in ooc_array_args:
                 ooc_array.update_padding()
-            
+
             # Return OOC arrays
             if len(ref_args) == 1:
                 return ooc_array_args[ref_args[0]]
@@ -91,4 +125,5 @@ def OOCmap(comm, ref_args, add_index=False, backend='jax'):
                 return tuple([args[arg_index] for arg_index in ref_args])
 
         return wrapper
+
     return decorator
