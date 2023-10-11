@@ -11,7 +11,7 @@ import numpy as np
 import cupy as cp
 import time
 from tqdm import tqdm
-import kvikio.nvcomp
+import kvikio.zarr
 
 from out_of_core import OOCmap
 from ooc_array import OOCArray
@@ -19,15 +19,16 @@ from ooc_array import OOCArray
 # Initialize MPI
 comm = MPI.COMM_WORLD
 
-# Disable pinned memory allocator
-cp.cuda.set_pinned_memory_allocator(None)
-
 # Initialize Warp
 wp.init()
 
 # GPU compressor lookup table
 gpu_compressor_lookup = {
-    "cascaded": kvikio.nvcomp.CascadedManager(),
+    "LZ4": kvikio.zarr.LZ4(),
+    "snappy": kvikio.zarr.Snappy(),
+    "Gdeflate": kvikio.zarr.Gdeflate(),
+    "cascaded": kvikio.zarr.Cascaded(),
+    "bitcomp": kvikio.zarr.Bitcomp(),
 }
 
 @wp.func
@@ -426,126 +427,6 @@ def initialize_taylor_green(
     f[18, i, j, k] = f_eq_0_2_1
 
 
-@wp.func
-def calculate_ray_direction(
-        i: int,
-        j: int,
-        camera_pos: wp.vec3,
-        camera_dir: wp.vec3,
-        camera_up: wp.vec3,
-        nr_pixels_i: int,
-        nr_pixels_j: int,
-        ):
-
-    # calculate ray direction
-    u = ((i / nr_pixels_i) - 0.5) * 2.0
-    v = ((j / nr_pixels_j) - 0.5) * 2.0
-    camera_dir = wp.normalize(camera_dir)
-    camera_right = wp.normalize(wp.cross(camera_dir, camera_up))
-    camera_up = wp.normalize(wp.cross(camera_right, camera_dir))
-    ray_dir = wp.normalize(camera_dir + u * camera_right + v * camera_up)
-    return ray_dir
-
-@wp.func
-def intersect_ray_box(
-        ray_dir: wp.vec3,
-        ray_pos: wp.vec3,
-        width: int,
-        height: int,
-        length: int,
-        ):
-    lower_bound = wp.vec3(
-
-
-@wp.kernel
-def render_f(
-    f: wp.array4d(dtype=float),
-    img: wp.array2d(dtype=wp.vec3),
-    depth: wp.array2d(dtype=float),
-    camera_pos: wp.vec3,
-    camera_dir: wp.vec3,
-    camera_up: wp.vec3,
-    width: int,
-    height: int,
-    length: int,
-    padding: int,
-):
-
-    # get image pixel
-    i, j = wp.tid()
-
-     
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    # sample needed points
-    f_1_1_1 = sample_f(f0,  0,     x,     y,     z, width, height, length)
-    f_2_1_1 = sample_f(f0,  1, x - 1,     y,     z, width, height, length)
-    f_0_1_1 = sample_f(f0,  2, x + 1,     y,     z, width, height, length)
-    f_1_2_1 = sample_f(f0,  3,     x, y - 1,     z, width, height, length)
-    f_1_0_1 = sample_f(f0,  4,     x, y + 1,     z, width, height, length)
-    f_1_1_2 = sample_f(f0,  5,     x,     y, z - 1, width, height, length)
-    f_1_1_0 = sample_f(f0,  6,     x,     y, z + 1, width, height, length)
-    f_1_2_2 = sample_f(f0,  7,     x, y - 1, z - 1, width, height, length)
-    f_1_0_0 = sample_f(f0,  8,     x, y + 1, z + 1, width, height, length)
-    f_1_2_0 = sample_f(f0,  9,     x, y - 1, z + 1, width, height, length)
-    f_1_0_2 = sample_f(f0, 10,     x, y + 1, z - 1, width, height, length)
-    f_2_1_2 = sample_f(f0, 11, x - 1,     y, z - 1, width, height, length)
-    f_0_1_0 = sample_f(f0, 12, x + 1,     y, z + 1, width, height, length)
-    f_2_1_0 = sample_f(f0, 13, x - 1,     y, z + 1, width, height, length)
-    f_0_1_2 = sample_f(f0, 14, x + 1,     y, z - 1, width, height, length)
-    f_2_2_1 = sample_f(f0, 15, x - 1, y - 1,     z, width, height, length)
-    f_0_0_1 = sample_f(f0, 16, x + 1, y + 1,     z, width, height, length)
-    f_2_0_1 = sample_f(f0, 17, x - 1, y + 1,     z, width, height, length)
-    f_0_2_1 = sample_f(f0, 18, x + 1, y - 1,     z, width, height, length)
-
-    # compute u and p
-    p = (f_1_1_1
-       + f_2_1_1 + f_0_1_1
-       + f_1_2_1 + f_1_0_1
-       + f_1_1_2 + f_1_1_0
-       + f_1_2_2 + f_1_0_0
-       + f_1_2_0 + f_1_0_2
-       + f_2_1_2 + f_0_1_0
-       + f_2_1_0 + f_0_1_2
-       + f_2_2_1 + f_0_0_1
-       + f_2_0_1 + f_0_2_1)
-    u = (f_2_1_1 - f_0_1_1
-       + f_2_1_2 - f_0_1_0
-       + f_2_1_0 - f_0_1_2
-       + f_2_2_1 - f_0_0_1
-       + f_2_0_1 - f_0_2_1)
-    v = (f_1_2_1 - f_1_0_1
-       + f_1_2_2 - f_1_0_0
-       + f_1_2_0 - f_1_0_2
-       + f_2_2_1 - f_0_0_1
-       - f_2_0_1 + f_0_2_1)
-    w = (f_1_1_2 - f_1_1_0
-       + f_1_2_2 - f_1_0_0
-       - f_1_2_0 + f_1_0_2
-       + f_2_1_2 - f_0_1_0
-       - f_2_1_0 + f_0_1_2)
-    res_p = 1.0 / p
-    u = u * res_p
-    v = v * res_p
-    w = w * res_p
-    uxu = u * u + v * v + w * w
-
-
-
-
 @OOCmap(comm, (0,), add_index=True, backend="warp")
 def initialize_f(f, dx: float):
     # Get inputs
@@ -565,35 +446,38 @@ def initialize_f(f, dx: float):
     return f
 
 
-@OOCmap(comm, (0,), backend="warp")
-def apply_stream_collide(f0, f1, tau: float, nr_steps: int):
+@OOCmap(comm, (0,), backend="warp", give_stream=True)
+def apply_stream_collide(f0, tau: float, nr_steps: int, stream: wp.Stream):
 
-    ## f0: is assumed to be a OOC array
-    #f1 = wp.empty(
-    #    (
-    #        19,
-    #        sub_n + 2 * nr_sub_steps,
-    #        sub_n + 2 * nr_sub_steps,
-    #        sub_n + 2 * nr_sub_steps,
-    #    ),
-    #    dtype=wp.float32,
-    #    device="cuda:0",
-    #)
-
-    # Apply streaming and collision for nr_steps
-    for _ in range(nr_steps):
-        # Apply streaming and collision step
-        wp.launch(
-            kernel=stream_collide,
-            dim=list(f0.shape[1:]),
-            inputs=[f0, f1, f0.shape[1], f0.shape[2], f0.shape[3], tau],
-            device=f0.device,
+    # f0: is assumed to be a OOC array
+    with wp.ScopedStream(stream):
+        f1 = wp.empty(
+            (
+                19,
+                sub_n + 2 * nr_sub_steps,
+                sub_n + 2 * nr_sub_steps,
+                sub_n + 2 * nr_sub_steps,
+            ),
+            dtype=wp.float32,
+            device="cuda:0",
         )
 
-        # Swap f0 and f1
-        f0, f1 = f1, f0
+        # Apply streaming and collision for nr_steps
+        for _ in range(nr_steps):
+            # Apply streaming and collision step
+            wp.launch(
+                kernel=stream_collide,
+                dim=list(f0.shape[1:]),
+                #inputs=[f0, f0, f0.shape[1], f0.shape[2], f0.shape[3], tau],
+                inputs=[f0, f1, f0.shape[1], f0.shape[2], f0.shape[3], tau],
+                device=f0.device,
+                stream=stream,
+            )
 
-    #del f1
+            # Swap f0 and f1
+            f0, f1 = f1, f0
+
+        del f1
 
     return f0
 
@@ -601,10 +485,10 @@ def apply_stream_collide(f0, f1, tau: float, nr_steps: int):
 if __name__ == "__main__":
 
     # Sim Parameters
-    n = 256 * 5
+    n = 512
     sub_n = 256
     tau = 0.505
-    nr_sub_steps = 8
+    nr_sub_steps = 16
     dx = 2.0 * np.pi / n
     codec_name = "cascaded"
     codec = gpu_compressor_lookup[codec_name]
@@ -617,7 +501,7 @@ if __name__ == "__main__":
         padding=(0, nr_sub_steps, nr_sub_steps, nr_sub_steps),
         comm=comm,
         devices=["cuda:0"],
-        codec=codec,
+        #codec=codec,
     )
 
     # Make f1
@@ -632,9 +516,6 @@ if __name__ == "__main__":
         device="cuda:0",
     )
 
-    # Save image
-    img = wp.empty((n, n), dtype=wp.float32, device="cuda:0")
-
     # Initialize f0
     f0 = initialize_f(f0, dx)
 
@@ -644,14 +525,11 @@ if __name__ == "__main__":
     comp_ratio = []
     t0 = time.time()
     for _ in tqdm(range(nr_steps)):
-        f0 = apply_stream_collide(f0, f1, tau, nr_sub_steps)
+        f0 = apply_stream_collide(f0, tau, nr_sub_steps)
 
-        # Store compression ratio
-        step.append(_ * nr_sub_steps)
-        comp_ratio.append(f0.compression_ratio())
-        print(f"Compression ratio: {f0.compression_ratio()}")
-        print(f"Size: {f0.size() / 1024**3} GB")
-        print("Nr Million Cells: ", n * n * n / 1e6)
+        ## Store compression ratio
+        #step.append(_ * nr_sub_steps)
+        #comp_ratio.append(f0.compression_ratio())
 
         #if _ % 4 == 0:
         #    # Create a new figure
@@ -676,6 +554,9 @@ if __name__ == "__main__":
         #    plt.savefig("f_snappy_" + str(_ * nr_sub_steps).zfill(5) + ".png")
         #    plt.close()
 
+
+
+
     t1 = time.time()
 
     # Compute MLUPS
@@ -683,9 +564,9 @@ if __name__ == "__main__":
     print("Nr Million Cells: ", n * n * n / 1e6)
     print("MLUPS: ", mlups)
 
-    ## Plot results
-    #np_f = f0.get_array()
-    #plt.imshow(np_f[3, :, :, 200])
-    #plt.colorbar()
-    #plt.savefig("f_.png")
-    #plt.show()
+    # Plot results
+    np_f = f0.get_array()
+    plt.imshow(np_f[3, :, :, 200])
+    plt.colorbar()
+    plt.savefig("f_.png")
+    plt.show()

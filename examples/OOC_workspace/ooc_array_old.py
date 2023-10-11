@@ -19,7 +19,7 @@ class OOCArray:
         comm=None,
         devices=[cp.cuda.Device(0)],
         codec=None,
-        nr_compute_tiles=1,
+        nr_compute_tiles=2,
     ):
         """Initialize the out-of-core array.
 
@@ -58,15 +58,15 @@ class OOCArray:
         # Set tile class
         if self.codec is None:
             self.Tile = DenseTile
-            self.DeviceTile = DenseGPUTile
-            self.HostTile = (
+            self.ComputeTile = DenseGPUTile
+            self.StoreTile = (
                 DenseCPUTile  # TODO: Possibly make HardDiskTile or something
             )
 
         else:
             self.Tile = CompressedTile
-            self.DeviceTile = CompressedGPUTile
-            self.HostTile = CompressedCPUTile
+            self.ComputeTile = CompressedGPUTile
+            self.StoreTile = CompressedCPUTile
 
         # Get process id and number of processes
         self.pid = self.comm.Get_rank()
@@ -105,11 +105,13 @@ class OOCArray:
 
         # Make the tiles
         self.tiles = {}
+        total_bytes = 0
         for tile_index in self.tile_process_map.keys():
             if self.pid == self.tile_process_map[tile_index]:
-                self.tiles[tile_index] = self.HostTile(
+                self.tiles[tile_index] = self.StoreTile(
                     self.tile_shape, self.dtype, self.padding, self.codec
                 )
+                total_bytes += np.prod(self.tile_shape) * cp.dtype(self.dtype).itemsize
 
         # Make GPU tiles for copying data between CPU and GPU
         if self.nr_tiles % self.nr_compute_tiles != 0:
@@ -119,49 +121,27 @@ class OOCArray:
         compute_array_shape = [
             s + 2 * p for (s, p) in zip(self.tile_shape, self.padding)
         ]
-        self.compute_tiles_htd = []
-        self.compute_tiles_dth = []
-        self.compute_streams_htd = []
-        self.compute_streams_dth = []
+        self.compute_tiles = []
+        self.compute_streams = []
         self.compute_arrays = []
-        self.current_compute_index = 0
+        self.current_compute_tile_index = 0
         for i in range(self.nr_compute_tiles):
-            # Make compute tiles for copying data 
-            compute_tile = self.DeviceTile(
+            # Make compute tile
+            compute_tile = self.ComputeTile(
                     self.tile_shape, self.dtype, self.padding, self.codec
             )
-            self.compute_tiles_htd.append(compute_tile)
-            compute_tile = self.DeviceTile(
-                    self.tile_shape, self.dtype, self.padding, self.codec
-            )
-            self.compute_tiles_dth.append(compute_tile)
-
-            # Make cupy stream
-            self.compute_streams_htd.append(cp.cuda.Stream(non_blocking=True))
-            self.compute_streams_dth.append(cp.cuda.Stream(non_blocking=True))
+            self.compute_tiles.append(compute_tile)
 
             # Make compute array
             self.compute_arrays.append(
                 cp.empty(compute_array_shape, self.dtype, self.device)
             )
 
-        # Make compute tile mappings
-        self.compute_tile_mapping_htd = {}
-        self.compute_tile_mapping_dth = {}
-        self.compute_stream_mapping_htd = {}
-        self.compute_stream_mapping_dth = {}
+            # Make cupy stream
+            self.compute_streams.append(
+                cp.cuda.Stream(non_blocking=True)
+            )
 
-    def size(self):
-        """Return number of allocated bytes for all host tiles."""
-        return sum([tile.size() for tile in self.tiles.values()])
-
-    def nbytes(self):
-        """Return number of bytes for all host tiles."""
-        return sum([tile.nbytes for tile in self.tiles.values()])
-
-    def compression_ratio(self):
-        """Return the compression ratio for all host tiles."""
-        return self.nbytes() / self.size()
 
     def compression_ratio(self):
         if self.codec is None:
@@ -175,80 +155,13 @@ class OOCArray:
                 total_uncompressed_bytes += tile_total_bytes_uncompressed
             return total_uncompressed_bytes / total_bytes
 
-    def update_compute_index(self):
-        """Update the current compute index."""
-        self.current_compute_index = (self.current_compute_index + 1) % self.nr_compute_tiles
+    def get_stream(self):
+        """Get the stream for the current compute tile."""
+        return self.compute_streams[self.current_compute_tile_index]
 
-    def _guess_next_tile_index(self, tile_index):
-        """Guess the next tile index to use for the compute array."""
-        # TODO: This assumes access is sequential
-        tile_indices = list(self.tiles.keys())
-        current_ind = tile_indices.index(tile_index)
-        next_ind = (current_ind + 1) % len(tile_indices)
-        return tile_indices[next_ind]
-
-    def reset_queue_htd(self):
-        self.compute_tile_mapping_htd = {}
-        self.compute_stream_mapping_htd = {}
-        self.current_compute_index = 0
-
-    def managed_compute_tiles_htd(self, tile_index):
-        """Get the compute tiles needed for computation.
-
-        Parameters
-        ----------
-        tile_index : tuple
-            The tile index.
-
-        Returns
-        -------
-        compute_tile : ComputeTile
-            The compute tile needed for computation.
-        """
-
-        ###################################################
-        # TODO: This assumes access is sequential for tiles
-        ###################################################
-
-        # Que up the next tiles
-        cur_tile_index = tile_index
-        cur_compute_index = self.current_compute_index
-        for i in range(self.nr_compute_tiles):
-            # Check if already in compute tile map and if not que it
-            if cur_tile_index not in self.compute_tile_mapping_htd.keys():
-                # Get the store tile
-                tile = self.tiles[cur_tile_index]
-
-                # Get the compute tile
-                compute_tile = self.compute_tiles_htd[cur_compute_index]
-
-                # Get the compute stream
-                compute_stream = self.compute_streams_htd[cur_compute_index]
-
-                # Copy the tile to the compute tile using the compute stream
-                with compute_stream:
-                    tile.to_gpu_tile(compute_tile)
-
-                # Set the compute tile mapping
-                self.compute_tile_mapping_htd[cur_tile_index] = compute_tile
-                self.compute_stream_mapping_htd[cur_tile_index] = compute_stream
-
-
-            # Update the tile index and compute index
-            cur_tile_index = self._guess_next_tile_index(cur_tile_index)
-            cur_compute_index = (cur_compute_index + 1) % self.nr_compute_tiles
-
-        # Get the compute tile
-        self.compute_stream_mapping_htd[tile_index].synchronize()
-        compute_tile = self.compute_tile_mapping_htd[tile_index]
-
-        # Pop the tile from the compute tile map
-        self.compute_tile_mapping_htd.pop(tile_index)
-        self.compute_stream_mapping_htd.pop(tile_index)
-
-        # Return the compute tile
-        return compute_tile
-
+    def update_compute_tile_index(self):
+        """Update the current compute tile index."""
+        self.current_compute_tile_index = (self.current_compute_tile_index + 1) % self.nr_compute_tiles
 
     def get_compute_array(self, tile_index):
         """Given a tile index, copy the tile to the compute array.
@@ -268,18 +181,24 @@ class OOCArray:
             global index will be (-1, -1, ..., -1).
         """
 
+        # Get the tile
+        tile = self.tiles[tile_index]
+
         # Get the compute tile
-        compute_tile = self.managed_compute_tiles_htd(tile_index)
+        compute_tile = self.compute_tiles[self.current_compute_tile_index]
+
+        # Copy the tile to the compute tile
+        tile.to_gpu_tile(compute_tile)
 
         # Concatenate the sub-arrays to make the compute array
-        compute_tile.to_array(self.compute_arrays[self.current_compute_index])
+        compute_tile.to_array(self.compute_arrays[self.current_compute_tile_index])
 
         # Return the compute array index in global array
         global_index = tuple(
             [i * s - p for (i, s, p) in zip(tile_index, self.tile_shape, self.padding)]
         )
 
-        return self.compute_arrays[self.current_compute_index], global_index
+        return self.compute_arrays[self.current_compute_tile_index], global_index
 
     def set_tile(self, compute_array, tile_index):
         """Given a tile index, copy the compute array to the tile.
@@ -293,21 +212,13 @@ class OOCArray:
         """
 
         # Set the compute tile to the correct one
-        compute_tile = self.compute_tiles_dth[self.current_compute_index]
+        compute_tile = self.compute_tiles[self.current_compute_tile_index]
 
         # Split the compute array into a tile
         compute_tile.from_array(compute_array)
 
-        # Get dth stream
-        stream = self.compute_streams_dth[self.current_compute_index]
-
-        # Syncronize the current stream and the compute stream
-        cp.cuda.get_current_stream().synchronize()
-        stream.synchronize()
-
         # Copy the tile from the compute tile to the store tile
-        with stream:
-            compute_tile.to_cpu_tile(self.tiles[tile_index])
+        compute_tile.to_cpu_tile(self.tiles[tile_index])
 
     def update_padding(self):
         """Perform a padding swap between neighboring tiles."""
@@ -316,7 +227,7 @@ class OOCArray:
         ##################################
 
         # Get padding indices
-        pad_ind = self.compute_tiles_htd[0].pad_ind
+        pad_ind = self.compute_tiles[0].pad_ind
 
         # Loop over tiles
         for tile_index in self.tile_process_map.keys():
@@ -365,10 +276,10 @@ class OOCArray:
             tile = self.tiles[tile_index]
 
             # Copy the tile to the compute tile
-            tile.to_gpu_tile(self.compute_tiles_htd[0])
+            tile.to_gpu_tile(self.compute_tiles[0])
 
             # Get the compute array
-            self.compute_tiles_htd[0].to_array(self.compute_arrays[0])
+            self.compute_tiles[0].to_array(self.compute_arrays[0])
 
             # Get the center array
             center_array = self.compute_arrays[0][tile._slice_center].get()

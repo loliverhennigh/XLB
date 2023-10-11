@@ -10,7 +10,7 @@ from ooc_array import OOCArray
 from utils import _cupy_to_backend, _backend_to_cupy, _stream_to_backend
 
 
-def OOCmap(comm, ref_args, add_index=False, backend="jax"):
+def OOCmap(comm, ref_args, add_index=False, backend="jax", give_stream=False):
     """Decorator for out-of-core functions.
 
     Parameters
@@ -53,6 +53,11 @@ def OOCmap(comm, ref_args, add_index=False, backend="jax"):
             # Apply the function to each of the ooc arrays
             for tile_index in ooc_array_args[0].tiles.keys():
 
+                ## Set stream
+                #stream = ooc_array_args[0].get_stream()
+                #backend_stream = _stream_to_backend(stream, backend)
+                #stream.use()
+
                 # Run through args and kwargs and replace ooc arrays with their compute arrays
                 new_args = []
                 for arg in args:
@@ -70,6 +75,10 @@ def OOCmap(comm, ref_args, add_index=False, backend="jax"):
                         new_args.append(compute_array)
                     else:
                         new_args.append(arg)
+
+                # Add stream to the arguments if requested
+                if give_stream:
+                    new_args.append(backend_stream)
 
                 # Run the function
                 results = func(*new_args)
@@ -89,7 +98,7 @@ def OOCmap(comm, ref_args, add_index=False, backend="jax"):
 
                 # Update the ooc arrays compute tile index
                 for ooc_array in ooc_array_args:
-                    ooc_array.update_compute_index()
+                    ooc_array.update_compute_tile_index()
 
             # Syncronize all processes
             cp.cuda.Device().synchronize()
@@ -98,9 +107,6 @@ def OOCmap(comm, ref_args, add_index=False, backend="jax"):
             # Update the ooc arrays padding
             for ooc_array in ooc_array_args:
                 ooc_array.update_padding()
-
-                # Reset que
-                ooc_array.reset_queue_htd()
 
             # Return OOC arrays
             if len(ref_args) == 1:
