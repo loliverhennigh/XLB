@@ -3,8 +3,13 @@ import cupy as cp
 from mpi4py import MPI
 import itertools
 from dataclasses import dataclass
+import warnings
 import time
-from kvikio._lib.arr import asarray
+
+try:
+    from kvikio._lib.arr import asarray
+except ImportError:
+    warnings.warn("kvikio not installed. Compression will not work.")
 
 from tiles.tile import Tile
 from tiles.dense_tile import DenseGPUTile

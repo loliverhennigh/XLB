@@ -4,6 +4,7 @@ import functools
 import warp as wp
 import cupy as cp
 import jax.dlpack as jdlpack
+import jax
 import numpy as np
 
 from ooc_array import OOCArray
@@ -32,10 +33,6 @@ def OOCmap(comm, ref_args, add_index=False, backend="jax"):
 
     def decorator(func):
         def wrapper(*args):
-            # Get MIP rank and size
-            rank = comm.Get_rank()
-            size = comm.Get_size()
-
             # Get list of OOC arrays
             ooc_array_args = []
             for arg in args:
@@ -57,6 +54,7 @@ def OOCmap(comm, ref_args, add_index=False, backend="jax"):
                 new_args = []
                 for arg in args:
                     if isinstance(arg, OOCArray):
+
                         # Get the compute array (this performs all the memory copies)
                         compute_array, global_index = arg.get_compute_array(tile_index)
 

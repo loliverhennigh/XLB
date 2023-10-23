@@ -1,6 +1,7 @@
 import warp as wp
 import cupy as cp
 import jax.dlpack as jdlpack
+import jax
  
 def _cupy_to_backend(cupy_array, backend):
     # Convert cupy array to backend array
@@ -19,6 +20,7 @@ def _cupy_to_backend(cupy_array, backend):
 def _backend_to_cupy(backend_array, backend):
     # Convert backend array to cupy array
     if backend == "jax":
+        (jax.device_put(0.) + 0).block_until_ready()
         dl_array = jdlpack.to_dlpack(backend_array)
     elif backend == "warp":
         dl_array = wp.to_dlpack(backend_array)

@@ -19,7 +19,7 @@ class OOCArray:
         comm=None,
         devices=[cp.cuda.Device(0)],
         codec=None,
-        nr_compute_tiles=1,
+        nr_compute_tiles=2,
     ):
         """Initialize the out-of-core array.
 
@@ -125,31 +125,31 @@ class OOCArray:
         self.compute_streams_dth = []
         self.compute_arrays = []
         self.current_compute_index = 0
-        for i in range(self.nr_compute_tiles):
-            # Make compute tiles for copying data 
-            compute_tile = self.DeviceTile(
-                    self.tile_shape, self.dtype, self.padding, self.codec
-            )
-            self.compute_tiles_htd.append(compute_tile)
-            compute_tile = self.DeviceTile(
-                    self.tile_shape, self.dtype, self.padding, self.codec
-            )
-            self.compute_tiles_dth.append(compute_tile)
+        with cp.cuda.Device(self.device):
+            for i in range(self.nr_compute_tiles):
+                # Make compute tiles for copying data 
+                compute_tile = self.DeviceTile(
+                        self.tile_shape, self.dtype, self.padding, self.codec
+                )
+                self.compute_tiles_htd.append(compute_tile)
+                compute_tile = self.DeviceTile(
+                        self.tile_shape, self.dtype, self.padding, self.codec
+                )
+                self.compute_tiles_dth.append(compute_tile)
 
-            # Make cupy stream
-            self.compute_streams_htd.append(cp.cuda.Stream(non_blocking=True))
-            self.compute_streams_dth.append(cp.cuda.Stream(non_blocking=True))
+                # Make cupy stream
+                self.compute_streams_htd.append(cp.cuda.Stream(non_blocking=True))
+                self.compute_streams_dth.append(cp.cuda.Stream(non_blocking=True))
 
-            # Make compute array
-            self.compute_arrays.append(
-                cp.empty(compute_array_shape, self.dtype, self.device)
-            )
+                # Make compute array
+                self.compute_arrays.append(
+                    cp.empty(compute_array_shape, self.dtype)
+                )
 
         # Make compute tile mappings
         self.compute_tile_mapping_htd = {}
         self.compute_tile_mapping_dth = {}
         self.compute_stream_mapping_htd = {}
-        self.compute_stream_mapping_dth = {}
 
     def size(self):
         """Return number of allocated bytes for all host tiles."""
@@ -184,8 +184,11 @@ class OOCArray:
         # TODO: This assumes access is sequential
         tile_indices = list(self.tiles.keys())
         current_ind = tile_indices.index(tile_index)
-        next_ind = (current_ind + 1) % len(tile_indices)
-        return tile_indices[next_ind]
+        next_ind = (current_ind + 1)
+        if next_ind >= len(tile_indices):
+            return None
+        else:
+            return tile_indices[next_ind]
 
     def reset_queue_htd(self):
         self.compute_tile_mapping_htd = {}
@@ -236,6 +239,8 @@ class OOCArray:
 
             # Update the tile index and compute index
             cur_tile_index = self._guess_next_tile_index(cur_tile_index)
+            if cur_tile_index is None:
+                break
             cur_compute_index = (cur_compute_index + 1) % self.nr_compute_tiles
 
         # Get the compute tile
@@ -292,18 +297,19 @@ class OOCArray:
             The tile index.
         """
 
+        # Syncronize the current stream dth stream
+        stream = self.compute_streams_dth[self.current_compute_index]
+        stream.synchronize()
+        cp.cuda.get_current_stream().synchronize()
+
         # Set the compute tile to the correct one
         compute_tile = self.compute_tiles_dth[self.current_compute_index]
 
         # Split the compute array into a tile
         compute_tile.from_array(compute_array)
 
-        # Get dth stream
-        stream = self.compute_streams_dth[self.current_compute_index]
-
         # Syncronize the current stream and the compute stream
         cp.cuda.get_current_stream().synchronize()
-        stream.synchronize()
 
         # Copy the tile from the compute tile to the store tile
         with stream:
@@ -311,67 +317,89 @@ class OOCArray:
 
     def update_padding(self):
         """Perform a padding swap between neighboring tiles."""
-        ##################################
-        # TODO: Currently does not use MPI
-        ##################################
 
         # Get padding indices
         pad_ind = self.compute_tiles_htd[0].pad_ind
 
         # Loop over tiles
+        comm_tag = 0
         for tile_index in self.tile_process_map.keys():
 
-            # if tile is on this process move padding
-            if self.pid == self.tile_process_map[tile_index]:
+            # Loop over all padding
+            for pad_index in pad_ind:
 
-                # Get the tile
-                tile = self.tiles[tile_index]
+                # Get neighboring tile index 
+                neigh_tile_index = tuple(
+                    [
+                        (i + p) % s
+                        for (i, p, s) in zip(tile_index, pad_index, self.tile_dims)
+                    ]
+                )
+                neigh_pad_index = tuple([-p for p in pad_index])  # flip
 
-                # Loop over all padding
-                for pad_index in pad_ind:
+                # 4 cases:
+                # 1. the tile and neighboring tile are on the same process
+                # 2. the tile is on this process and the neighboring tile is on another process
+                # 3. the tile is on another process and the neighboring tile is on this process
+                # 4. the tile and neighboring tile are on different processes
 
-                    # Get neighboring tile index and neighboring padding index
-                    neigh_tile_index = tuple(
-                        [
-                            (i + p) % s
-                            for (i, p, s) in zip(tile_index, pad_index, self.tile_dims)
-                        ]
-                    )
-                    neigh_pad_index = tuple([-p for p in pad_index])  # flip
+                # Case 1: the tile and neighboring tile are on the same process
+                if self.pid == self.tile_process_map[tile_index] and self.pid == self.tile_process_map[neigh_tile_index]:
 
-                    # Get pointer to padding from current tile
+                    # Get the tile and neighboring tile
+                    tile = self.tiles[tile_index]
+                    neigh_tile = self.tiles[neigh_tile_index]
+
+                    # Get pointer to padding and neighboring padding
+                    padding = tile._padding[pad_index]
+                    neigh_padding = neigh_tile._buf_padding[neigh_pad_index]
+
+                    # Swap padding
+                    tile._padding[pad_index] = neigh_padding
+                    neigh_tile._buf_padding[neigh_pad_index] = padding
+
+                # Case 2: the tile is on this process and the neighboring tile is on another process
+                if self.pid == self.tile_process_map[tile_index] and self.pid != self.tile_process_map[neigh_tile_index]:
+
+                    # Get the tile and padding
+                    tile = self.tiles[tile_index]
                     padding = tile._padding[pad_index]
 
-                    # Get pointer to padding from neighboring tile
-                    neigh_padding = self.tiles[neigh_tile_index]._buf_padding[
-                        neigh_pad_index
-                    ]
+                    # Send padding to neighboring process
+                    self.comm.Send(padding, dest=self.tile_process_map[neigh_tile_index], tag=comm_tag)
 
-                    # Swap padding TODO: will be come more complicated with MPI
-                    tile._padding[pad_index] = neigh_padding
-                    self.tiles[neigh_tile_index]._buf_padding[neigh_pad_index] = padding
+                # Case 3: the tile is on another process and the neighboring tile is on this process
+                if self.pid != self.tile_process_map[tile_index] and self.pid == self.tile_process_map[neigh_tile_index]:
+                    # Get the neighboring tile and padding
+                    neigh_tile = self.tiles[neigh_tile_index]
+                    neigh_padding = neigh_tile._buf_padding[neigh_pad_index]
+
+                    # Receive padding from neighboring process
+                    self.comm.Recv(neigh_padding, source=self.tile_process_map[tile_index], tag=comm_tag)
+
+                # Case 4: the tile and neighboring tile are on different processes
+                if self.pid != self.tile_process_map[tile_index] and self.pid != self.tile_process_map[neigh_tile_index]:
+                    pass
+
+                # Increment the communication tag
+                comm_tag += 1
 
         # Shuffle padding with buffers
-        for tile_index in self.tile_process_map.keys():
-            self.tiles[tile_index].swap_buf_padding()
+        for tile in self.tiles.values():
+            tile.swap_buf_padding()
 
     def get_array(self):
         """Get the full array out from all the sub-arrays. This should only be used for testing."""
 
         # Get the full array
-        array = np.ones(self.shape, np.float32)
-        for tile_index in self.tiles.keys():
-            # Get the tile
-            tile = self.tiles[tile_index]
+        if self.comm.rank == 0:
+            array = np.ones(self.shape, np.float32)
+        else:
+            array = None
 
-            # Copy the tile to the compute tile
-            tile.to_gpu_tile(self.compute_tiles_htd[0])
-
-            # Get the compute array
-            self.compute_tiles_htd[0].to_array(self.compute_arrays[0])
-
-            # Get the center array
-            center_array = self.compute_arrays[0][tile._slice_center].get()
+        # Loop over tiles
+        comm_tag = 0
+        for tile_index in self.tile_process_map.keys():
 
             # Set the center array in the full array
             slice_index = tuple(
@@ -380,5 +408,51 @@ class OOCArray:
                     for (i, s) in zip(tile_index, self.tile_shape)
                 ]
             )
-            array[slice_index] = center_array
+
+            # if tile on this process compute the center array
+            if self.comm.rank == self.tile_process_map[tile_index]:
+                # Get the tile
+                tile = self.tiles[tile_index]
+
+                # Copy the tile to the compute tile
+                tile.to_gpu_tile(self.compute_tiles_htd[0])
+
+                # Get the compute array
+                self.compute_tiles_htd[0].to_array(self.compute_arrays[0])
+
+                # Get the center array
+                center_array = self.compute_arrays[0][tile._slice_center].get()
+
+            # 4 cases:
+            # 1. the tile is on rank 0 and this process is rank 0
+            # 2. the tile is on another rank and this process is rank 0
+            # 3. the tile is on this rank and this process is not rank 0
+            # 4. the tile is not on rank 0 and this process is not rank 0
+
+            # Case 1: the tile is on rank 0
+            if self.comm.rank == 0 and self.tile_process_map[tile_index] == 0:
+                # Set the center array in the full array
+                array[slice_index] = center_array
+
+            # Case 2: the tile is on another rank and this process is rank 0
+            if self.comm.rank == 0 and self.tile_process_map[tile_index] != 0:
+                # Get the data from the other rank
+                center_array = np.empty(self.tile_shape, np.float32)
+                self.comm.Recv(center_array, source=self.tile_process_map[tile_index], tag=comm_tag)
+
+                # Set the center array in the full array
+                array[slice_index] = center_array
+
+            # Case 3: the tile is on this rank and this process is not rank 0
+            if self.comm.rank != 0 and self.tile_process_map[tile_index] == self.comm.rank:
+                # Send the data to rank 0
+                self.comm.Send(center_array, dest=0, tag=comm_tag)
+
+            # Case 4: the tile is not on rank 0 and this process is not rank 0
+            if self.comm.rank != 0 and self.tile_process_map[tile_index] != 0:
+                pass
+
+            # Update the communication tag
+            comm_tag += 1
+
         return array

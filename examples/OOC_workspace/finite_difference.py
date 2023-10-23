@@ -16,18 +16,17 @@ from ooc_array import OOCArray
 # Initialize MPI
 comm = MPI.COMM_WORLD
 
-
 @jit
 def jacobi_iteration(phi: jnp.ndarray, boundary: jnp.ndarray, dx: float) -> jnp.ndarray:
     """Apply one Jacobi iteration to the input array for Poisson equation where boundary is 0 on the boundary and 1 elsewhere."""
 
     # Calculate rolled arrays for each direction
-    phi_0_1_1 = jnp.roll(phi, 1, axis=1)
-    phi_2_1_1 = jnp.roll(phi, -1, axis=1)
-    phi_1_0_1 = jnp.roll(phi, 1, axis=2)
-    phi_1_2_1 = jnp.roll(phi, -1, axis=2)
-    phi_1_1_0 = jnp.roll(phi, 1, axis=3)
-    phi_1_1_2 = jnp.roll(phi, -1, axis=3)
+    phi_0_1_1 = jnp.roll(phi, 1, axis=0)
+    phi_2_1_1 = jnp.roll(phi, -1, axis=0)
+    phi_1_0_1 = jnp.roll(phi, 1, axis=1)
+    phi_1_2_1 = jnp.roll(phi, -1, axis=1)
+    phi_1_1_0 = jnp.roll(phi, 1, axis=2)
+    phi_1_1_2 = jnp.roll(phi, -1, axis=2)
 
     # Jacobi iteration
     phi_new = (
@@ -50,12 +49,6 @@ def apply_16_jacobi_iterations(
         phi = jacobi_iteration(phi, boundary, dx)
     return phi
 
-
-## Make function to apply on distributed array
-# def out_of_core_jacobi_iterations(phi: DistributedArray, boundary: DistributedArray, dx: float) -> DistributedArray:
-#    phi = apply_16_jacobi_iterations(phi, boundary, dx)
-#    return phi
-
 # Make OOC function for initializing boundary
 @OOCmap(comm, (0,), add_index=True)
 def out_of_core_boundary(boundary):
@@ -68,14 +61,14 @@ def out_of_core_boundary(boundary):
 
     # Set boundary to 0 on the boundary
     # x-direction
-    if index[1] <= 0 and 0 < index[1] + boundary.shape[1]:
-        boundary = boundary.at[:, -index[1], :, :].set(0.0)
+    if index[0] <= 0 and 0 < index[0] + boundary.shape[0]:
+        boundary = boundary.at[-index[0], :, :].set(0.0)
     # y-direction
-    if index[2] <= 0 and 0 < index[2] + boundary.shape[2]:
-        boundary = boundary.at[:, :, -index[2], :].set(0.0)
+    if index[1] <= 0 and 0 < index[1] + boundary.shape[1]:
+        boundary = boundary.at[:, -index[1], :].set(0.0)
     # z-direction
-    if index[3] <= 0 and 0 < index[3] + boundary.shape[3]:
-        boundary = boundary.at[:, :, :, -index[3]].set(0.0)
+    if index[2] <= 0 and 0 < index[2] + boundary.shape[2]:
+        boundary = boundary.at[:, :, -index[2]].set(0.0)
 
     return boundary
 
@@ -83,29 +76,29 @@ def out_of_core_boundary(boundary):
 if __name__ == "__main__":
 
     # Normal jax array implementation
-    n = 256
-    sub_n = 128
+    n = 1024
+    sub_n = 512
     padding = 16
     dx = 1.0 / n
 
     # Make OOC distributed array
     dist_phi = OOCArray(
-        shape=(1, n, n, n),
+        shape=(n, n, n),
         dtype=cp.float32,
-        tile_shape=(1, sub_n, sub_n, sub_n),
-        padding=(0, padding, padding, padding),
+        tile_shape=(sub_n, sub_n, sub_n),
+        padding=(padding, padding, padding),
         comm=comm,
-        devices=["cuda:0"],
+        devices=[cp.cuda.Device(0) for i in range(comm.size)],
     )
 
     # Make boundary, 0 on boundary, 1 elsewhere
     dist_boundary = OOCArray(
-        shape=(1, n, n, n),
+        shape=(n, n, n),
         dtype=cp.float32,
-        tile_shape=(1, sub_n, sub_n, sub_n),
-        padding=(0, padding, padding, padding),
+        tile_shape=(sub_n, sub_n, sub_n),
+        padding=(padding, padding, padding),
         comm=comm,
-        devices=["cuda:0"],
+        devices=[cp.cuda.Device(0) for i in range(comm.size)],
     )
     dist_boundary = out_of_core_boundary(dist_boundary)
 
@@ -115,7 +108,12 @@ if __name__ == "__main__":
 
     # Plot results
     np_phi = dist_phi.get_array()
-    plt.imshow(np_phi[0, :, :, n // 2])
+    plt.imshow(np_phi[:, :, n // 2])
     plt.colorbar()
     plt.savefig("jacobi.png")
+    plt.close()
+    np_boundary = dist_boundary.get_array()
+    plt.imshow(np_boundary[:, :, n // 2])
+    plt.colorbar()
+    plt.savefig("boundary.png")
     plt.close()

@@ -42,9 +42,7 @@ class DenseCPUTile(DenseTile):
 
     ###########################################################################
     # TODO: Figure out what to use for memory allocation. Need to do research
-    # Currently uses way too much memory do to the way cupy allocates memory.
-    # If allocations more than 1GB are made, it will double the amount of
-    # memory used. This is because cupy allocates memory in 1GB chunks or something.
+    # Currently over-allocated by power of 2
     ###########################################################################
 
     def __init__(self, shape, dtype, padding, codec=None):

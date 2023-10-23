@@ -445,7 +445,7 @@ def time_step(cons_state, prim_state, dx: float, gamma: float, dt: float, nr_ste
 
 if __name__ == "__main__":
     # simulation params
-    scale_factor = 32
+    scale_factor = 1
     res = 2048 * scale_factor
     gamma = 5.0 / 3.0
     courant_fac = 0.4
@@ -453,8 +453,8 @@ if __name__ == "__main__":
     shape = (res, res)
     dx = (1.0 / res)
     vol = (1.0 / res) ** 2
-    tile_res = 64 * scale_factor
-    tile_padding = 8 * scale_factor
+    tile_res = 512 * scale_factor
+    tile_padding = 32 * scale_factor
     substeps = tile_padding - 2
     codec_name = "cascaded"
     codec = gpu_compressor_lookup[codec_name]
@@ -469,7 +469,7 @@ if __name__ == "__main__":
         tile_shape=(4, tile_res, tile_res),
         padding=(0, tile_padding, tile_padding),
         comm=comm,
-        devices=["cuda:0"],
+        devices=[cp.cuda.Device(0) for i in range(comm.size)],
         codec=codec,
     )
 

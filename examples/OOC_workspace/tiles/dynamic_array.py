@@ -18,17 +18,18 @@ class DynamicArray:
     """
 
 
-    def __init__(self, nbytes, bytes_resize=2**12):
+    def __init__(self, nbytes, bytes_resize_factor=0.1):
         # Set the number of bytes
         self.nbytes = nbytes
-        self.bytes_resize = bytes_resize
+        self.bytes_resize_factor = bytes_resize_factor
+        self.bytes_resize = math.ceil(bytes_resize_factor*nbytes)
 
         # Set the number of bytes
-        self.allocated_bytes = math.ceil(nbytes/bytes_resize)*bytes_resize
+        self.allocated_bytes = math.ceil(nbytes/self.bytes_resize)*self.bytes_resize
 
 class DynamicPinnedArray(DynamicArray):
-    def __init__(self, nbytes, bytes_resize=2**6):
-        super().__init__(nbytes, bytes_resize)
+    def __init__(self, nbytes, bytes_resize_factor=0.1):
+        super().__init__(nbytes, bytes_resize_factor)
 
         # Allocate the memory
         self.mem = cp.cuda.alloc_pinned_memory(self.allocated_bytes)
@@ -40,14 +41,14 @@ class DynamicPinnedArray(DynamicArray):
         return self.mem.size()
 
     def resize(self, nbytes):
+
         # Set the new number of bytes
         self.nbytes = nbytes
 
         # Check if the number of bytes requested is less than 2xbytes_resize or if the number of bytes requested exceeds the allocated number of bytes  
         if nbytes < (self.allocated_bytes - 2*self.bytes_resize) or nbytes > self.allocated_bytes: 
-
-            # Free the memory
-            del self.mem
+            ## Free the memory
+            #del self.mem
 
             # Set the new number of allocated bytes
             self.allocated_bytes = math.ceil(nbytes/self.bytes_resize)*self.bytes_resize
@@ -57,6 +58,9 @@ class DynamicPinnedArray(DynamicArray):
 
             # Make np array that points to the pinned memory
             self.array = np.frombuffer(self.mem, dtype=np.uint8, count=int(self.nbytes))
+
+            # Set new resize number of bytes
+            self.bytes_resize = math.ceil(self.bytes_resize_factor*nbytes)
 
         # Otherwise change numpy array size
         else:
