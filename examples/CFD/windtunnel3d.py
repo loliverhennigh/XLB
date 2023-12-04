@@ -122,6 +122,7 @@ if __name__ == '__main__':
 
     visc = prescribed_vel * clength / Re
     omega = 1.0 / (3. * visc + 0.5)
+    print(omega)
 
     os.system('rm -rf ./*.vtk && rm -rf ./*.png')
 

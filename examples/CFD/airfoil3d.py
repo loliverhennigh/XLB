@@ -39,7 +39,73 @@ from jax.config import config
 import os
 #os.environ["XLA_FLAGS"] = '--xla_force_host_platform_device_count=8'
 import jax
+import jax.numpy as jnp
 import scipy
+
+import phantomgaze as pg
+
+# jit compilation for q-criterion and vorticity
+@jax.jit
+def q_criterion(u):
+    # Compute derivatives
+    u_x = u[..., 0]
+    u_y = u[..., 1]
+    u_z = u[..., 2]
+
+    # Compute derivatives
+    u_x_dx = (u_x[2:, 1:-1, 1:-1] - u_x[:-2, 1:-1, 1:-1]) / 2
+    u_x_dy = (u_x[1:-1, 2:, 1:-1] - u_x[1:-1, :-2, 1:-1]) / 2
+    u_x_dz = (u_x[1:-1, 1:-1, 2:] - u_x[1:-1, 1:-1, :-2]) / 2
+    u_y_dx = (u_y[2:, 1:-1, 1:-1] - u_y[:-2, 1:-1, 1:-1]) / 2
+    u_y_dy = (u_y[1:-1, 2:, 1:-1] - u_y[1:-1, :-2, 1:-1]) / 2
+    u_y_dz = (u_y[1:-1, 1:-1, 2:] - u_y[1:-1, 1:-1, :-2]) / 2
+    u_z_dx = (u_z[2:, 1:-1, 1:-1] - u_z[:-2, 1:-1, 1:-1]) / 2
+    u_z_dy = (u_z[1:-1, 2:, 1:-1] - u_z[1:-1, :-2, 1:-1]) / 2
+    u_z_dz = (u_z[1:-1, 1:-1, 2:] - u_z[1:-1, 1:-1, :-2]) / 2
+
+    # Compute vorticity
+    mu_x = u_z_dy - u_y_dz
+    mu_y = u_x_dz - u_z_dx
+    mu_z = u_y_dx - u_x_dy
+    norm_mu = jnp.sqrt(mu_x ** 2 + mu_y ** 2 + mu_z ** 2)
+
+    # Compute strain rate
+    s_0_0 = u_x_dx
+    s_0_1 = 0.5 * (u_x_dy + u_y_dx)
+    s_0_2 = 0.5 * (u_x_dz + u_z_dx)
+    s_1_0 = s_0_1
+    s_1_1 = u_y_dy
+    s_1_2 = 0.5 * (u_y_dz + u_z_dy)
+    s_2_0 = s_0_2
+    s_2_1 = s_1_2
+    s_2_2 = u_z_dz
+    s_dot_s = (
+        s_0_0 ** 2 + s_0_1 ** 2 + s_0_2 ** 2 +
+        s_1_0 ** 2 + s_1_1 ** 2 + s_1_2 ** 2 +
+        s_2_0 ** 2 + s_2_1 ** 2 + s_2_2 ** 2
+    )
+
+    # Compute omega
+    omega_0_0 = 0.0
+    omega_0_1 = 0.5 * (u_x_dy - u_y_dx)
+    omega_0_2 = 0.5 * (u_x_dz - u_z_dx)
+    omega_1_0 = -omega_0_1
+    omega_1_1 = 0.0
+    omega_1_2 = 0.5 * (u_y_dz - u_z_dy)
+    omega_2_0 = -omega_0_2
+    omega_2_1 = -omega_1_2
+    omega_2_2 = 0.0
+    omega_dot_omega = (
+        omega_0_0 ** 2 + omega_0_1 ** 2 + omega_0_2 ** 2 +
+        omega_1_0 ** 2 + omega_1_1 ** 2 + omega_1_2 ** 2 +
+        omega_2_0 ** 2 + omega_2_1 ** 2 + omega_2_2 ** 2
+    )
+
+    # Compute q-criterion
+    q = 0.5 * (omega_dot_omega - s_dot_s)
+
+    return norm_mu, q
+
 
 # Function to create a NACA airfoil shape given its length, thickness, and angle of attack
 def makeNacaAirfoil(length, thickness=30, angle=0):
@@ -72,6 +138,9 @@ class Airfoil(KBCSim):
         airfoil_indices = np.argwhere(airfoil_mask)
         wall = np.concatenate((airfoil_indices,
                                self.boundingBoxIndices['bottom'], self.boundingBoxIndices['top']))
+        self.boundary = jnp.zeros((self.nx, self.ny, self.nz), dtype=jnp.float32)
+        self.boundary = self.boundary.at[tuple(wall.T)].set(1.0)
+        self.boundary = self.boundary[2:-2, 2:-2, 2:-2]
         self.BCs.append(BounceBack(tuple(wall.T), self.gridInfo, self.precisionPolicy))
 
         doNothing = self.boundingBoxIndices['right']
@@ -85,7 +154,63 @@ class Airfoil(KBCSim):
         self.BCs.append(EquilibriumBC(tuple(inlet.T), self.gridInfo, self.precisionPolicy, rho_inlet, vel_inlet))
 
     def output_data(self, **kwargs):
-        # 1:-1 to remove boundary voxels (not needed for visualization when using full-way bounce-back)
+        # Compute q-criterion and vorticity using finite differences
+        # Get velocity field
+        u = kwargs['u'][..., 1:-1, :]
+
+        # vorticity and q-criterion
+        norm_mu, q = q_criterion(u)
+
+        # Make phantomgaze volume
+        dx = 0.01
+        origin = (0.0, 0.0, 0.0)
+        upper_bound = (self.boundary.shape[0] * dx, self.boundary.shape[1] * dx, self.boundary.shape[2] * dx)
+        q_volume = pg.objects.Volume(
+            q,
+            spacing=(dx, dx, dx),
+            origin=origin,
+        )
+        norm_mu_volume = pg.objects.Volume(
+            norm_mu,
+            spacing=(dx, dx, dx),
+            origin=origin,
+        )
+        boundary_volume = pg.objects.Volume(
+            self.boundary,
+            spacing=(dx, dx, dx),
+            origin=origin,
+        )
+
+        # Make colormap for norm_mu
+        colormap = pg.Colormap("jet", vmin=0.0, vmax=0.05)
+
+        # Get camera parameters
+        focal_point = (self.boundary.shape[0] * dx / 2, self.boundary.shape[1] * dx / 2, self.boundary.shape[2] * dx / 2)
+        radius = 3.0
+        angle = kwargs['timestep'] * 0.0001
+        camera_position = (focal_point[0] + radius * np.sin(angle), focal_point[1], focal_point[2] + radius * np.cos(angle))
+
+        # Rotate camera 
+        camera = pg.Camera(position=camera_position, focal_point=focal_point, view_up=(0.0, 1.0, 0.0), max_depth=30.0, height=1080, width=1920)
+
+        # Make wireframe
+        screen_buffer = pg.render.wireframe(lower_bound=origin, upper_bound=upper_bound, thickness=0.01, camera=camera)
+
+        # Render axes
+        screen_buffer = pg.render.axes(size=0.1, center=(0.0, 0.0, 1.1), camera=camera, screen_buffer=screen_buffer)
+
+        # Render q-criterion
+        screen_buffer = pg.render.contour(q_volume, threshold=0.00003, color=norm_mu_volume, colormap=colormap, camera=camera, screen_buffer=screen_buffer)
+
+        # Render boundary
+        boundary_colormap = pg.Colormap("Greys_r", vmin=0.0, vmax=3.0, opacity=np.linspace(0.0, 6.0, 256)) # This will make it grey
+        screen_buffer = pg.render.volume(boundary_volume, camera=camera, colormap=boundary_colormap, screen_buffer=screen_buffer)
+
+        # Show the rendered image
+        plt.imsave('q_criterion_' + str(kwargs['timestep']).zfill(7) + '.png', np.minimum(screen_buffer.image.get(), 1.0))
+
+        """
+        print(type(kwargs['rho']))
         rho = np.array(kwargs['rho'][..., 1:-1, :])
         u = np.array(kwargs['u'][..., 1:-1, :])
         timestep = kwargs['timestep']
@@ -99,6 +224,7 @@ class Airfoil(KBCSim):
         # save_image(timestep, rho, u)
         fields = {"rho": rho[..., 0], "u_x": u[..., 0], "u_y": u[..., 1], "u_z": u[..., 2]}
         save_fields_vtk(timestep, fields)
+        """
 
 if __name__ == '__main__':
     airfoil_length = 101
@@ -133,7 +259,7 @@ if __name__ == '__main__':
         'ny': ny,
         'nz': nz,
         'precision': precision,
-        'io_rate': 100,
+        'io_rate': 10,
         'print_info_rate': 100,
     }
 

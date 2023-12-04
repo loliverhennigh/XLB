@@ -81,6 +81,7 @@ if __name__ == "__main__":
     kwargs = {
         'lattice': lattice,
         'omega': omega,
+        'backend': 'jax',
         'nx': nx,
         'ny': ny,
         'nz': 0,
