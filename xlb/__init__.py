@@ -15,6 +15,7 @@ import xlb.operator.boundary_condition
 # import xlb.operator.force
 import xlb.operator.equilibrium
 import xlb.operator.macroscopic
+import xlb.operator.stepper
 
 # Compute constructors
 import xlb.compute_constructor

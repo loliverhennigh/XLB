@@ -60,10 +60,10 @@ class KBC(Collision):
         # Compute shear TODO: Generalize this and possibly make it an operator or something
         fneq = f - feq
         if isinstance(self.velocity_set, D2Q9):
-            shear = self.decompose_shear_d2q9_jax(fneq, self.velocity_set)
+            shear = self.decompose_shear_d2q9_jax(fneq)
             delta_s = shear * rho / 4.0 # TODO: Check this
         elif isinstance(self.velocity_set, D3Q27):
-            shear = self.decompose_shear_d3q27_jax(fneq, self.velocity_set)
+            shear = self.decompose_shear_d3q27_jax(fneq)
             delta_s = shear * rho
 
         # Perform collision

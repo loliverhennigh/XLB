@@ -10,13 +10,18 @@ import matplotlib.pyplot as plt
 import xlb
 
 if __name__ == "__main__":
-    # Setup
-    re = 1600.0
-    nr = 64
-    vel = 0.04 * 32 / nr
-    visc = vel * nr / re
+    # Simulation parameters
+    nr = 256
+    vel = 0.1
+    visc = 0.00001
     omega = 1.0 / (3.0 * visc + 0.5)
-    print(f"visc: {visc}, omega: {omega}")
+    length = 2 * np.pi
+
+    # Geometry (sphere)
+    lin = np.linspace(0, length, nr)
+    X, Y, Z = np.meshgrid(lin, lin, lin, indexing="ij")
+    XYZ = np.stack([X, Y, Z], axis=-1)
+    radius = np.pi / 8.0
 
     # XLB precision policy
     precision_policy = xlb.precision_policy.Fp32Fp32()
@@ -34,71 +39,66 @@ if __name__ == "__main__":
     #collision = xlb.operator.collision.BGK(omega=omega, velocity_set=velocity_set)
     collision = xlb.operator.collision.KBC(omega=omega, velocity_set=velocity_set)
 
-    # XLB boundary condition (solid cube in the middle)
-    box_size = 8
-    indices = np.arange((nr//2 - box_size//2), (nr//2 + box_size//2))
-    indices = np.meshgrid(indices, indices, indices, indexing="ij")
-    indices = np.stack(indices, axis=-1)
-    indices = indices.reshape(-1, 3)
-    #bounce_back = xlb.operator.boundary_condition.FullBounceBack(indices=indices, velocity_set=velocity_set)
-    #bounce_back = xlb.operator.boundary_condition.HalfwayBounceBack(indices=indices, velocity_set=velocity_set)
+    # XLB stream
+    stream = xlb.operator.stream.Stream(velocity_set=velocity_set)
 
-    # Make XLB compute kernels
-    #compute = xlb.compute_constructor.nse.JaxNSE(
-    #    collision=collision,
-    #    boundary_conditions=[bounce_back],
-    #    forcing=None,
-    #    precision_policy=precision_policy,
-    #)
+    # XLB noslip boundary condition (sphere)
+    in_cylinder = ((X - np.pi/2.0)**2 + (Y - np.pi)**2 + (Z - np.pi)**2) < radius**2
+    indices = np.argwhere(in_cylinder)
+    bounce_back = xlb.operator.boundary_condition.FullBounceBack.from_indices(
+        indices=indices,
+        velocity_set=velocity_set
+    )
 
-    # Make taylor green vortex initial condition
-    lin = jnp.linspace(0, 2 * jnp.pi, nr, endpoint=False)
-    X, Y, Z = jnp.meshgrid(lin, lin, lin, indexing="ij")
-    X = X[..., None]
-    Y = Y[..., None]
-    Z = Z[..., None]
-    #u = vel * jnp.sin(X) * jnp.cos(Y) * jnp.cos(Z)
-    #v = -vel * jnp.cos(X) * jnp.sin(Y) * jnp.cos(Z)
-    u = vel * jnp.ones_like(X)
-    v = jnp.zeros_like(X)
-    #u = vel * jnp.sin(X) * jnp.cos(Y)
-    #v = -vel * jnp.cos(X) * jnp.sin(Y)
-    w = jnp.zeros_like(X)
-    #rho = (
-    #    3.0
-    #    * vel**2
-    #    * (1.0 / 16.0)
-    #    * (jnp.cos(2 * X) + jnp.cos(2 * Y) + jnp.cos(2 * Z))
-    #    + 1.0)
-    #rho = 1.0 - vel ** 2 / 12. * (np.cos(2. * X) + np.cos(2. * Y))
-    rho = jnp.ones_like(X)
-    u = jnp.concatenate([u, v, w], axis=-1)
+    # XLB outflow boundary condition
+    outflow = xlb.operator.boundary_condition.DoNothing.from_indices(
+        indices=np.argwhere(XYZ[..., 0] == length),
+        velocity_set=velocity_set
+    )
+
+    # XLB inflow boundary condition
+    inflow = xlb.operator.boundary_condition.EquilibriumBoundary.from_indices(
+        indices=np.argwhere(XYZ[..., 0] == 0.0),
+        velocity_set=velocity_set,
+        rho=1.0,
+        u=np.array([vel, 0.0, 0.0]),
+        equilibrium=equilibrium
+    )
+
+    # XLB stepper
+    stepper = xlb.operator.stepper.NSE(
+        collision=collision,
+        stream=stream,
+        equilibrium=equilibrium,
+        macroscopic=macroscopic,
+        boundary_conditions=[bounce_back, outflow, inflow],
+        precision_policy=precision_policy,
+    )
+
+    # Make initial condition
+    u = jnp.stack([vel * jnp.ones_like(X), jnp.zeros_like(X), jnp.zeros_like(X)], axis=-1)
+    rho = jnp.expand_dims(jnp.ones_like(X), axis=-1)
     f = equilibrium(rho, u)
-    print("Here")
 
     # Get boundary id and mask
-    collision_boundary_id = jnp.zeros((nr, nr, nr), dtype=np.uint8)
-    stream_boundary_id = jnp.zeros((nr, nr, nr), dtype=np.uint8)
-    mask = jnp.ones((nr, nr, nr, velocity_set.q), dtype=np.uint8)
-    #boundary_id = compute.set_boundary_id(boundary_id)
+    ijk = jnp.meshgrid(jnp.arange(nr), jnp.arange(nr), jnp.arange(nr), indexing="ij")
+    boundary_id, mask = stepper.set_boundary(jnp.stack(ijk, axis=-1))
 
-    # Set boundary id to be 1 in inner cube
-    radius = jnp.pi / 4.0
-    stream_boundary_id = jnp.zeros((nr, nr, nr), dtype=np.uint8)
-    in_cylinder = (X - jnp.pi) ** 2 + (Y - jnp.pi) ** 2 + (Z - jnp.pi) ** 2 < radius ** 2
-    stream_boundary_id = stream_boundary_id.at[in_cylinder[..., 0]].set(1)
-    mask = compute.set_mask(mask)
+    plt.imshow(boundary_id[..., nr//2], cmap="jet")
+    plt.colorbar()
+    plt.show()
 
     # Run simulation
     tic = time.time()
     nr_iter = 4096
     for i in tqdm(range(nr_iter)):
-        f = compute.step(f, collision_boundary_id, stream_boundary_id, mask, i)
+        f = stepper(f, boundary_id, mask, i)
 
         if i % 32 == 0:
             # Get u, rho from f
-            rho, u = compute.macroscopic(f)
+            rho, u = macroscopic(f)
             norm_u = jnp.linalg.norm(u, axis=-1)
+            norm_u = (1.0 - jnp.minimum(boundary_id, 1.0)) * norm_u
 
             # Plot
             plt.imshow(norm_u[..., nr//2], cmap="jet")
