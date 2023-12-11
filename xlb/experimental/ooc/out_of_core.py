@@ -7,8 +7,8 @@ import jax.dlpack as jdlpack
 import jax
 import numpy as np
 
-from ooc_array import OOCArray
-from utils import _cupy_to_backend, _backend_to_cupy, _stream_to_backend
+from xlb.experimental.ooc.ooc_array import OOCArray
+from xlb.experimental.ooc.utils import _cupy_to_backend, _backend_to_cupy, _stream_to_backend
 
 
 def OOCmap(comm, ref_args, add_index=False, backend="jax"):

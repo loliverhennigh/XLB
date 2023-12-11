@@ -1,6 +1,5 @@
 import numpy as np
 import cupy as cp
-from mpi4py import MPI
 import itertools
 from dataclasses import dataclass
 import warnings
@@ -11,9 +10,9 @@ try:
 except ImportError:
     warnings.warn("kvikio not installed. Compression will not work.")
 
-from tiles.tile import Tile
-from tiles.dense_tile import DenseGPUTile
-from tiles.dynamic_array import DynamicPinnedArray
+from xlb.experimental.ooc.tiles.tile import Tile
+from xlb.experimental.ooc.tiles.dense_tile import DenseGPUTile
+from xlb.experimental.ooc.tiles.dynamic_array import DynamicPinnedArray
 
 
 def _decode(comp_array, dest_array, codec):

@@ -1,6 +1,5 @@
 import numpy as np
 import cupy as cp
-from mpi4py import MPI
 import itertools
 from dataclasses import dataclass
 

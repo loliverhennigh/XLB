@@ -1,10 +1,9 @@
 import numpy as np
 import cupy as cp
-from mpi4py import MPI
 import itertools
 from dataclasses import dataclass
 
-from tiles.tile import Tile
+from xlb.experimental.ooc.tiles.tile import Tile
 
 
 class DenseTile(Tile):
@@ -41,7 +40,7 @@ class DenseCPUTile(DenseTile):
     """A dense tile with cells on the CPU."""
 
     def __init__(self, shape, dtype, padding, codec=None):
-        super().__init__(shape, dtype, padding, "cpu", None)
+        super().__init__(shape, dtype, padding, None)
 
     def allocate_array(self, shape):
         """Returns a cupy array with the given shape."""

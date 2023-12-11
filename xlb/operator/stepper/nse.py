@@ -34,7 +34,8 @@ class NSE(Stepper):
             precision_policy,
         )
 
-    @partial(jit, static_argnums=(0, 5), donate_argnums=(1))
+    #@partial(jit, static_argnums=(0, 5), donate_argnums=(1))
+    @partial(jit, static_argnums=(0, 5))
     def apply_jax(self, f, boundary_id, mask, timestep):
         """
         Perform a single step of the lattice boltzmann method

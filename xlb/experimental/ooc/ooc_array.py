@@ -1,11 +1,11 @@
 import numpy as np
 import cupy as cp
-from mpi4py import MPI
+#from mpi4py import MPI
 import itertools
 from dataclasses import dataclass
 
-from tiles.dense_tile import DenseTile, DenseGPUTile, DenseCPUTile
-from tiles.compressed_tile import CompressedTile, CompressedGPUTile, CompressedCPUTile
+from xlb.experimental.ooc.tiles.dense_tile import DenseTile, DenseGPUTile, DenseCPUTile
+from xlb.experimental.ooc.tiles.compressed_tile import CompressedTile, CompressedGPUTile, CompressedCPUTile
 
 
 class OOCArray:
@@ -141,6 +141,7 @@ class OOCArray:
                 self.compute_streams_dth.append(cp.cuda.Stream(non_blocking=True))
 
                 # Make compute array
+
                 self.compute_arrays.append(cp.empty(compute_array_shape, self.dtype))
 
         # Make compute tile mappings
@@ -235,8 +236,9 @@ class OOCArray:
                 compute_stream = self.compute_streams_htd[cur_compute_index]
 
                 # Copy the tile to the compute tile using the compute stream
-                with compute_stream:
-                    tile.to_gpu_tile(compute_tile)
+                #with compute_stream:
+                #    tile.to_gpu_tile(compute_tile)
+                tile.to_gpu_tile(compute_tile)
 
                 # Set the compute tile mapping
                 self.compute_tile_mapping_htd[cur_tile_index] = compute_tile
@@ -316,8 +318,9 @@ class OOCArray:
         cp.cuda.get_current_stream().synchronize()
 
         # Copy the tile from the compute tile to the store tile
-        with stream:
-            compute_tile.to_cpu_tile(self.tiles[tile_index])
+        #with stream:
+        #    compute_tile.to_cpu_tile(self.tiles[tile_index])
+        compute_tile.to_cpu_tile(self.tiles[tile_index])
 
     def update_padding(self):
         """Perform a padding swap between neighboring tiles."""
