@@ -63,12 +63,16 @@ class MeshBoundaryMasker(Operator):
         ):
             # get index
             i, j, k = wp.tid()
+            i += 1
+            j += 1
+            k += 1
+            base_index = wp.vec3i(i, j, k)
 
             # Get local indices
             index = wp.vec3i()
-            index[0] = i - start_index[0]
-            index[1] = j - start_index[1]
-            index[2] = k - start_index[2]
+            index[0] = i + start_index[0]
+            index[1] = j + start_index[1]
+            index[2] = k + start_index[2]
 
             # position of the point
             ijk = wp.vec3(wp.float32(index[0]), wp.float32(index[1]), wp.float32(index[2]))
@@ -95,7 +99,7 @@ class MeshBoundaryMasker(Operator):
                         # Get the index of the streaming direction
                         push_index = wp.vec3i()
                         for d in range(self.velocity_set.d):
-                            push_index[d] = index[d] + _c[d, l]
+                            push_index[d] = base_index[d] + _c[d, l]
 
                         # Set the boundary id and missing_mask
                         bc_mask[0, push_index[0], push_index[1], push_index[2]] = wp.uint8(id_number)
@@ -113,36 +117,39 @@ class MeshBoundaryMasker(Operator):
         missing_mask,
         start_index=(0, 0, 0),
     ):
-        assert bc.mesh_vertices is not None, f'Please provide the mesh points for {bc.__class__.__name__} BC using keyword "mesh_vertices"!'
-        assert bc.indices is None, f"Please use IndicesBoundaryMasker operator if {bc.__class__.__name__} is imposed on known indices of the grid!"
-        assert (
-            bc.mesh_vertices.shape[1] == self.velocity_set.d
-        ), "Mesh points must be reshaped into an array (N, 3) where N indicates number of points!"
-        mesh_vertices = bc.mesh_vertices
-        id_number = bc.id
 
-        # We are done with bc.mesh_vertices. Remove them from BC objects
-        bc.__dict__.pop("mesh_vertices", None)
+        # Get warp mesh
+        if "wp_mesh" not in self.__dict__:
+            assert bc.mesh_vertices is not None, f'Please provide the mesh points for {bc.__class__.__name__} BC using keyword "mesh_vertices"!'
+            assert bc.indices is None, f"Please use IndicesBoundaryMasker operator if {bc.__class__.__name__} is imposed on known indices of the grid!"
+            assert (
+                bc.mesh_vertices.shape[1] == self.velocity_set.d
+            ), "Mesh points must be reshaped into an array (N, 3) where N indicates number of points!"
+            mesh_vertices = bc.mesh_vertices
+            self.id_number = bc.id
 
-        mesh_indices = np.arange(mesh_vertices.shape[0])
-        mesh = wp.Mesh(
-            points=wp.array(mesh_vertices, dtype=wp.vec3),
-            indices=wp.array(mesh_indices, dtype=int),
-        )
+            # We are done with bc.mesh_vertices. Remove them from BC objects
+            bc.__dict__.pop("mesh_vertices", None)
+
+            mesh_indices = np.arange(mesh_vertices.shape[0])
+            self.wp_mesh = wp.Mesh(
+                points=wp.array(mesh_vertices, dtype=wp.vec3),
+                indices=wp.array(mesh_indices, dtype=int),
+            )
 
         # Launch the warp kernel
         wp.launch(
             self.warp_kernel,
             inputs=[
-                mesh.id,
+                self.wp_mesh.id,
                 origin,
                 spacing,
-                id_number,
+                self.id_number,
                 bc_mask,
                 missing_mask,
                 start_index,
             ],
-            dim=bc_mask.shape[1:],
+            dim=[i - 2 for i in bc_mask.shape[1:]],
         )
 
         return bc_mask, missing_mask

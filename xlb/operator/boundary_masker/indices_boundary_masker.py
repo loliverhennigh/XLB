@@ -181,6 +181,7 @@ class IndicesBoundaryMasker(Operator):
                 and index[2] >= 0
                 and index[2] < missing_mask.shape[3]
             ):
+
                 # Stream indices
                 for l in range(_q):
                     # Get the index of the streaming direction
@@ -226,24 +227,27 @@ class IndicesBoundaryMasker(Operator):
 
     @Operator.register_backend(ComputeBackend.WARP)
     def warp_implementation(self, bclist, bc_mask, missing_mask, start_index=None):
-        dim = self.velocity_set.d
-        index_list = [[] for _ in range(dim)]
-        id_list = []
-        is_interior = []
-        for bc in bclist:
-            assert bc.indices is not None, f'Please specify indices associated with the {bc.__class__.__name__} BC using keyword "indices"!'
-            assert bc.mesh_vertices is None, f"Please use MeshBoundaryMasker operator if {bc.__class__.__name__} is imposed on a mesh (e.g. STL)!"
-            for d in range(dim):
-                index_list[d] += bc.indices[d]
-            id_list += [bc.id] * len(bc.indices[0])
-            is_interior += self.are_indices_in_interior(bc.indices, bc_mask[0].shape) if bc.needs_padding else [False] * len(bc.indices[0])
 
-            # We are done with bc.indices. Remove them from BC objects
-            bc.__dict__.pop("indices", None)
+        # Get the indices
+        if "wp_indices" not in self.__dict__:
+            dim = self.velocity_set.d
+            index_list = [[] for _ in range(dim)]
+            id_list = []
+            is_interior = []
+            for bc in bclist:
+                assert bc.indices is not None, f'Please specify indices associated with the {bc.__class__.__name__} BC using keyword "indices"!'
+                assert bc.mesh_vertices is None, f"Please use MeshBoundaryMasker operator if {bc.__class__.__name__} is imposed on a mesh (e.g. STL)!"
+                for d in range(dim):
+                    index_list[d] += bc.indices[d]
+                id_list += [bc.id] * len(bc.indices[0])
+                is_interior += self.are_indices_in_interior(bc.indices, bc_mask[0].shape) if bc.needs_padding else [False] * len(bc.indices[0])
 
-        indices = wp.array2d(index_list, dtype=wp.int32)
-        id_number = wp.array1d(id_list, dtype=wp.uint8)
-        is_interior = wp.array1d(is_interior, dtype=wp.bool)
+                # We are done with bc.indices. Remove them from BC objects
+                bc.__dict__.pop("indices", None)
+
+            self.wp_indices = wp.array2d(index_list, dtype=wp.int32)
+            self.wp_id_number = wp.array1d(id_list, dtype=wp.uint8)
+            self.wp_is_interior = wp.array1d(is_interior, dtype=wp.bool)
 
         if start_index is None:
             start_index = (0,) * dim
@@ -252,14 +256,14 @@ class IndicesBoundaryMasker(Operator):
         wp.launch(
             self.warp_kernel,
             inputs=[
-                indices,
-                id_number,
-                is_interior,
+                self.wp_indices,
+                self.wp_id_number,
+                self.wp_is_interior,
                 bc_mask,
                 missing_mask,
                 start_index,
             ],
-            dim=indices.shape[1],
+            dim=self.wp_indices.shape[1],
         )
 
         return bc_mask, missing_mask
