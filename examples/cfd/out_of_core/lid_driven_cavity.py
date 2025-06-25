@@ -1,16 +1,9 @@
 # Lid Drive Cavity XLB library
 
 import os
-from time import time
-import numpy as np
 import warp as wp
-import pyvista as pv
 from tqdm import tqdm
-import matplotlib.pyplot as plt
 import logging
-import time
-import xml.etree.ElementTree as ET
-import itertools
 import mpi4py # TODO: actually learn how mpi works...
 mpi4py.rc.thread_level = 'serialized'  # or 'funneled'
 from mpi4py import MPI
@@ -18,12 +11,11 @@ import argparse
 import math
 from typing import Any
 
-wp.clear_kernel_cache()
+wp.clear_kernel_cache() # TODO: Remove this
 wp.init()
-wp.clear_kernel_cache()
 
 import xlb
-from xlb.operator.stepper import Stepper
+from xlb.operator.stepper.nse_stepper import IncompressibleNavierStokesStepper
 from xlb.operator.boundary_condition.boundary_condition import ImplementationStep
 from xlb.operator.operator import Operator
 
@@ -99,7 +91,6 @@ class UniformInitializer:
 
 
 # Add import for the correct stepper
-from xlb.operator.stepper.nse_stepper import IncompressibleNavierStokesStepper
 
 if __name__ == "__main__":
 
@@ -221,7 +212,10 @@ if __name__ == "__main__":
             full_way_bc,
             equilibrium_bc,
         ],
-        collision_type=collision,  # collision is a string, e.g., "SmagorinskyLESBGK"
+        collision_type=collision,
+        velocity_set=velocity_set,
+        precision_policy=precision_policy,
+        compute_backend=compute_backend,
     )
     planar_boundary_masker = xlb.operator.boundary_masker.PlanarBoundaryMasker(
         velocity_set=velocity_set,

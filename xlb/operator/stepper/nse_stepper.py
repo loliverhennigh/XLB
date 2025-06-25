@@ -30,8 +30,11 @@ class IncompressibleNavierStokesStepper(Stepper):
         collision_type="BGK",
         forcing_scheme="exact_difference",
         force_vector=None,
+        velocity_set=None,
+        precision_policy=None,
+        compute_backend=None,
     ):
-        super().__init__(grid, boundary_conditions)
+        super().__init__(grid, boundary_conditions, velocity_set, precision_policy, compute_backend)
 
         # Construct the collision operator
         if collision_type == "BGK":

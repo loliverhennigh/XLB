@@ -8,16 +8,16 @@ class Stepper(Operator):
     Class that handles the construction of lattice boltzmann stepping operator
     """
 
-    def __init__(self, grid, boundary_conditions):
+    def __init__(self, grid, boundary_conditions, velocity_set=None, precision_policy=None, compute_backend=None):
         self.grid = grid
         self.boundary_conditions = boundary_conditions
         # Get velocity set, precision policy, and compute backend
-        velocity_set = DefaultConfig.velocity_set
-        precision_policy = DefaultConfig.default_precision_policy
-        compute_backend = DefaultConfig.default_backend
+        self.velocity_set = velocity_set or DefaultConfig.velocity_set
+        self.precision_policy = precision_policy or DefaultConfig.default_precision_policy
+        self.compute_backend = compute_backend or DefaultConfig.default_backend
 
         # Initialize operator
-        super().__init__(velocity_set, precision_policy, compute_backend)
+        super().__init__(self.velocity_set, self.precision_policy, self.compute_backend)
 
     def prepare_fields(self, initializer=None):
         """Initialize the fields required for the stepper.
